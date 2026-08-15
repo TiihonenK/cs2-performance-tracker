@@ -34,6 +34,7 @@ def setup_database():
                  (match_id TEXT, 
                   player_id TEXT, 
                   kills INTEGER, 
+                  headshots INTEGER,
                   deaths INTEGER,
                   PRIMARY KEY (match_id, player_id))''')
                   
@@ -42,7 +43,7 @@ def setup_database():
 
 def check_cloudflare(driver):
     """Tarkistaa, onko selain jumissa Cloudflaren tarkistusruudussa ja yrittää odottaa."""
-    for _ in range(4): # Yritetään odottaa maksimissaan 20 sekuntia
+    for _ in range(4):
         title = driver.title.lower()
         if "moment" in title or "cloudflare" in title or "just a moment" in title:
             print("     [!] Cloudflare-estoruutu havaittu, odotetaan 5 sekuntia ylimääräistä...")
@@ -87,9 +88,10 @@ def get_top_30_teams(driver, conn):
     return teams_data
 
 def get_team_match_links(driver, team_id, team_name):
-    print(f"\nHaetaan joukkueen {team_name} (ID: {team_id}) kartat viimeiseltä 2 kuukaudelta...")
+    # MUUTOS 1: Päivitetty tulostus ja aika-ikkuna 180 päivään (n. 6kk)
+    print(f"\nHaetaan joukkueen {team_name} (ID: {team_id}) kartat viimeiseltä 6 kuukaudelta...")
     end_date = datetime.now()
-    start_date = end_date - timedelta(days=60)
+    start_date = end_date - timedelta(days=180) 
     
     url = f"{BASE_URL}/stats/teams/matches/{team_id}/{team_name.replace(' ', '-').lower()}?startDate={start_date.strftime('%Y-%m-%d')}&endDate={end_date.strftime('%Y-%m-%d')}"
     driver.get(url)
@@ -121,7 +123,6 @@ def get_match_stats(driver, conn, match_id, match_url, map_name):
     print(f"  -> Haetaan tilastot kartalle: {map_name} (ID: {match_id})...")
     driver.get(match_url)
     
-    # Odotetaan satunnainen aika ja tarkistetaan Cloudflare
     time.sleep(random.uniform(4.0, 7.0))
     check_cloudflare(driver)
     
@@ -131,7 +132,6 @@ def get_match_stats(driver, conn, match_id, match_url, map_name):
     try:
         match_info = soup.find('div', class_='match-info-box')
         
-        # JOS TULOSLAATIKKOA EI LÖYDY, ILMOITETAAN SIITÄ ÄÄNEEN
         if not match_info:
             print(f"     [VIRHE] Sivulta ei löytynyt tuloksia. Sivu voi olla rikki tai Cloudflare blokkasi botin.")
             return
@@ -156,33 +156,31 @@ def get_match_stats(driver, conn, match_id, match_url, map_name):
         valid_table_count = 0
         
         for table in stats_tables:
-            thead = table.find('thead')
-            if not thead: continue
+            rows = table.find_all('tr')
+            if not rows: continue
             
-            headers = thead.find_all('th')
-            kills_idx, deaths_idx, kd_diff_idx = -1, -1, -1
+            headers = rows[0].find_all(['th', 'td'])
+            kills_idx, deaths_idx = -1, -1
             
-            for idx, th in enumerate(headers):
-                text = th.text.strip().lower()
-                if text == 'kills': kills_idx = idx
-                elif text == 'deaths': deaths_idx = idx
-                elif text == 'k-d diff' or text == 'k-d': kd_diff_idx = idx
+            for idx, cell in enumerate(headers):
+                text = cell.text.strip().lower()
+                if text in ['k', 'kills'] or text.startswith('k ('):
+                    kills_idx = idx
+                if text in ['d', 'deaths'] or text.startswith('d ('):
+                    deaths_idx = idx
             
-            if kills_idx == -1 or (deaths_idx == -1 and kd_diff_idx == -1):
+            if kills_idx == -1 or deaths_idx == -1 or len(headers) < 8:
                 continue
                 
             current_team_id = team_ids[valid_table_count] if valid_table_count < len(team_ids) else None
             valid_table_count += 1
             
-            tbody = table.find('tbody')
-            rows = tbody.find_all('tr') if tbody else table.find_all('tr')
-            
-            for row in rows:
+            for row in rows[1:]:
                 cols = row.find_all('td')
-                if len(cols) <= max(kills_idx, kd_diff_idx, deaths_idx): continue
+                if len(cols) <= max(kills_idx, deaths_idx): continue
                     
                 player_link = cols[0].find('a', href=True)
-                if not player_link or 'player' not in player_link['href']: continue
+                if not player_link or 'player' not in player_link['href'].lower(): continue
                 
                 player_id = next((p for p in player_link['href'].split('/') if p.isdigit()), None)
                 player_name = player_link.text.strip()
@@ -196,18 +194,28 @@ def get_match_stats(driver, conn, match_id, match_url, map_name):
                     c.execute("INSERT OR IGNORE INTO players (id, name) VALUES (?, ?)", (player_id, player_name))
                 
                 try:
-                    kills = int(cols[kills_idx].text.split()[0])
+                    k_full = cols[kills_idx].text.strip()
+                    d_full = cols[deaths_idx].text.strip()
                     
-                    if deaths_idx != -1:
-                        deaths = int(cols[deaths_idx].text.split()[0])
-                    else:
-                        kd_val = int(cols[kd_diff_idx].text.replace('+', '').strip())
-                        deaths = kills - kd_val
+                    k_str = k_full.split()[0]
+                    d_str = d_full.split()[0]
+                    
+                    if not k_str.lstrip('-').isdigit() or not d_str.lstrip('-').isdigit():
+                        continue
                         
-                    c.execute("INSERT OR IGNORE INTO player_stats (match_id, player_id, kills, deaths) VALUES (?, ?, ?, ?)",
-                              (match_id, player_id, kills, deaths))
-                    print(f"     DEBUG: Tallennettu statsit -> {player_name}: {kills} K / {deaths} D")
-                except Exception:
+                    kills = int(k_str)
+                    deaths = int(d_str)
+                    
+                    headshots = 0
+                    if '(' in k_full:
+                        hs_str = k_full.split('(')[1].replace(')', '').strip()
+                        if hs_str.isdigit():
+                            headshots = int(hs_str)
+                    
+                    c.execute("INSERT OR IGNORE INTO player_stats (match_id, player_id, kills, headshots, deaths) VALUES (?, ?, ?, ?, ?)",
+                              (match_id, player_id, kills, headshots, deaths))
+                    # Poistettu printtaus jokaisesta pelaajasta erikseen, jotta terminaali ei täyty liikaa isossa ajossa
+                except Exception as e:
                     pass
 
         conn.commit()
@@ -223,12 +231,12 @@ if __name__ == "__main__":
     try:
         teams = get_top_30_teams(driver, db_conn)
         if teams:
-            for team in teams[:3]: 
+            # MUUTOS 2: Poistettu [:3] rajoitus, käy nyt läpi KAIKKI löydetyt joukkueet
+            for team in teams: 
                 matches = get_team_match_links(driver, team['id'], team['name'])
                 for match in matches: 
                     get_match_stats(driver, db_conn, match['id'], match['url'], match['map_name'])
                     
-                    # Lisätty satunnaista odotusta bottiestojen harhauttamiseksi
                     wait_time = random.uniform(6.0, 10.0)
                     print(f"  Odotetaan {wait_time:.1f} sekuntia ennen seuraavaa karttaa...")
                     time.sleep(wait_time)
