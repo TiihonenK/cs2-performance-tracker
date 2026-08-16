@@ -65,12 +65,34 @@ def calculate_map_elos():
 if __name__ == "__main__":
     elos, names = calculate_map_elos()
 
-    map_to_check = "Mirage"
-    if map_to_check in elos:
-        print(f"TOP 10 JOUKKUEET: {map_to_check.upper()}")
+    conn = sqlite3.connect('hltv_data.db')
+    matches_df = pd.read_sql_query("SELECT team1_id, team2_id, map_name FROM matches", conn)
+    conn.close()
 
-        sorted_teams = sorted(elos[map_to_check].items(), key=lambda x: x[1], reverse=True)
+    games_played = {}
+    for index, row in matches_df.iterrows():
+        t1, t2, m_name = row['team1_id'], row['team2_id'], row['map_name']
+        if m_name not in games_played:
+            games_played[m_name] = {}
+
+        games_played[m_name][t1] = games_played[m_name].get(t1, 0) + 1
+        games_played[m_name][t2] = games_played[m_name].get(t2, 0) + 1
+
+    map_to_check = "Mirage"
+    MIN_GAMES_REQUIRED = 5
+
+    if map_to_check in elos:
+        print(f"--- TOP 10 JOUKKUEET: {map_to_check.upper()} (Väh. {MIN_GAMES_REQUIRED} peliä) ---")
+
+        luotettavat_tiimit = {
+            team_id: score
+            for team_id, score in elos[map_to_check].items()
+            if games_played.get(map_to_check, {}).get(team_id, 0) >= MIN_GAMES_REQUIRED
+        }
+
+        sorted_teams = sorted(luotettavat_tiimit.items(), key=lambda x: x[1], reverse=True)
 
         for rank, (team_id, elo_score) in enumerate(sorted_teams[:10], 1):
             team_name = names.get(team_id, f"Tuntematon joukkue ({team_id})")
-            print(f"{rank}. {team_name:20} | Elo: {int(elo_score)}")
+            pelatut_pelit = games_played[map_to_check][team_id]
+            print(f"{rank}. {team_name:<20} | Elo: {int(elo_score)} (pelattu: {pelatut_pelit})")
