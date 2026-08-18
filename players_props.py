@@ -35,17 +35,18 @@ def get_player_stats(player_name, map_name):
 
     return {"name": df['name'].iloc[0], "map": map_name, "kpr": kpr, "rounds_played": rounds}
 
-def simulate_player_kills(player_data, line, num_simulations=10000):
+def simulate_player_kills(player_data, line, expected_rounds=21.5, num_simulations=10000):
     kpr = player_data['kpr']
 
-    # Arvotaan ottelun pituus
-    simulated_match_lengths = np.random.normal(loc=21.5, scale=3.0, size=num_simulations)
-    simulated_match_lengths = np.clip(simulated_match_lengths, 13, 36)
+    # 1. Käytetään nyt mallin ennustamaa ottelun pituutta (expected_rounds)
+    simulated_match_lengths = np.random.normal(loc=expected_rounds, scale=2.8, size=num_simulations)
+    simulated_match_lengths = np.clip(simulated_match_lengths, 13, 36) # Peli kestää väh. 13 kierrosta, max n. 36 (OT)
 
+    # 2. Lasketaan tapot
     expected_kills_array = simulated_match_lengths * kpr
-
     simulated_actual_kills = np.random.poisson(expected_kills_array)
 
+    # 3. Yli/Alle tulokset
     over_hits = np.sum(simulated_actual_kills > line)
     under_hits = num_simulations - over_hits
 
