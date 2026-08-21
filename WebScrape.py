@@ -37,9 +37,36 @@ def setup_database():
                   headshots INTEGER,
                   deaths INTEGER,
                   PRIMARY KEY (match_id, player_id))''')
+    
+    # Seurataan, minä päivänä kunkin joukkueen ottelut on viimeksi haettu.
+    # Näin seuraavalla ajokerralla voidaan hakea vain uudet ottelut siitä eteenpäin.
+    c.execute('''CREATE TABLE IF NOT EXISTS scrape_status
+                 (team_id TEXT PRIMARY KEY,
+                  last_scraped_date TEXT)''')
                   
     conn.commit()
     return conn
+
+def get_last_scraped_date(conn, team_id):
+    """Palauttaa joukkueen viimeisimmän haetun päivämäärän, tai None jos ei ole haettu ennen."""
+    c = conn.cursor()
+    c.execute("SELECT last_scraped_date FROM scrape_status WHERE team_id = ?", (team_id,))
+    row = c.fetchone()
+    return row[0] if row else None
+
+def update_scraped_date(conn, team_id, date_str):
+    """Päivittää joukkueen viimeisimmän haetun päivämäärän."""
+    c = conn.cursor()
+    c.execute("""INSERT INTO scrape_status (team_id, last_scraped_date) VALUES (?, ?)
+                 ON CONFLICT(team_id) DO UPDATE SET last_scraped_date=excluded.last_scraped_date""",
+              (team_id, date_str))
+    conn.commit()
+
+def match_already_scraped(conn, match_id):
+    """Tarkistaa, onko ottelu/kartta jo tietokannassa."""
+    c = conn.cursor()
+    c.execute("SELECT 1 FROM matches WHERE id = ?", (match_id,))
+    return c.fetchone() is not None
 
 def check_cloudflare(driver):
     """Tarkistaa, onko selain jumissa Cloudflaren tarkistusruudussa ja yrittää odottaa."""
@@ -87,11 +114,8 @@ def get_top_30_teams(driver, conn):
     print(f"Löydettiin {len(teams_data)} joukkuetta (Top 30).")
     return teams_data
 
-def get_team_match_links(driver, team_id, team_name):
-    # MUUTOS 1: Päivitetty tulostus ja aika-ikkuna 180 päivään (n. 6kk)
-    print(f"\nHaetaan joukkueen {team_name} (ID: {team_id}) kartat viimeiseltä 6 kuukaudelta...")
-    end_date = datetime.now()
-    start_date = end_date - timedelta(days=180) 
+def get_team_match_links(driver, team_id, team_name, start_date, end_date):
+    print(f"\nHaetaan joukkueen {team_name} (ID: {team_id}) kartat aikaväliltä {start_date.strftime('%Y-%m-%d')} - {end_date.strftime('%Y-%m-%d')}...")
     
     url = f"{BASE_URL}/stats/teams/matches/{team_id}/{team_name.replace(' ', '-').lower()}?startDate={start_date.strftime('%Y-%m-%d')}&endDate={end_date.strftime('%Y-%m-%d')}"
     driver.get(url)
@@ -133,27 +157,42 @@ def get_match_stats(driver, conn, match_id, match_url, map_name):
         match_info = soup.find('div', class_='match-info-box')
         
         if not match_info:
-            print(f"     [VIRHE] Sivulta ei löytynyt tuloksia. Sivu voi olla rikki tai Cloudflare blokkasi botin.")
+            print(f"     [VIRHE] Sivulta ei löytynyt tuloksia.")
             return
 
-        team_ids = []
+        # Haetaan tulostaulun tiedot ottelua varten
         team_left = match_info.find('div', class_='team-left')
         team_right = match_info.find('div', class_='team-right')
         
+        # Kootaan (joukkueen nimi -> team_id) -yhdistelmä, jotta taulukon otsikkoa
+        # voidaan verrata luotettavasti oikeaan joukkueeseen. Tämä korvaa aiemman
+        # find_all_previous-hakemisen, joka saattoi osua vahingossa mihin tahansa
+        # sivun aiempaan '/stats/teams/'-linkkiin (esim. sivupalkkiin) ja antoi
+        # siksi väärän team_id:n pelaajille.
+        team_name_to_id = {}
+        
         if team_left and team_right:
-            t1_id = next((p for p in team_left.find('a')['href'].split('/') if p.isdigit()), None)
-            t2_id = next((p for p in team_right.find('a')['href'].split('/') if p.isdigit()), None)
-            team_ids = [t1_id, t2_id]
+            t1_link = team_left.find('a')
+            t2_link = team_right.find('a')
+            
+            t1_id = next((p for p in t1_link['href'].split('/') if p.isdigit()), None) if t1_link else None
+            t2_id = next((p for p in t2_link['href'].split('/') if p.isdigit()), None) if t2_link else None
+            
+            t1_name = t1_link.text.strip() if t1_link else ""
+            t2_name = t2_link.text.strip() if t2_link else ""
+            
+            if t1_id and t1_name:
+                team_name_to_id[t1_name.lower()] = t1_id
+            if t2_id and t2_name:
+                team_name_to_id[t2_name.lower()] = t2_id
             
             s1 = int(team_left.find('div', class_='bold').text.strip()) if team_left.find('div', class_='bold') else 0
             s2 = int(team_right.find('div', class_='bold').text.strip()) if team_right.find('div', class_='bold') else 0
             
             c.execute("INSERT OR IGNORE INTO matches (id, team1_id, team2_id, score_team1, score_team2, map_name) VALUES (?, ?, ?, ?, ?, ?)",
                       (match_id, t1_id, t2_id, s1, s2, map_name))
-            print(f"     DEBUG: Tallennettu ottelu - Tiimi 1: {t1_id} ({s1}) vs Tiimi 2: {t2_id} ({s2})")
     
         stats_tables = soup.find_all('table', class_='stats-table')
-        valid_table_count = 0
         
         for table in stats_tables:
             rows = table.find_all('tr')
@@ -164,16 +203,39 @@ def get_match_stats(driver, conn, match_id, match_url, map_name):
             
             for idx, cell in enumerate(headers):
                 text = cell.text.strip().lower()
+                # HLTV käyttää nykyään otsikkoja "K (hs)" ja "D (t)" pelkän "K"/"D" sijaan
                 if text in ['k', 'kills'] or text.startswith('k ('):
                     kills_idx = idx
                 if text in ['d', 'deaths'] or text.startswith('d ('):
                     deaths_idx = idx
             
+            # Varmistetaan, että taulukossa on tappojen ja kuolemien lisäksi riittävästi
+            # sarakkeita (>8). Tämä jättää pois pienet First Kills ja Flashbang -taulukot.
             if kills_idx == -1 or deaths_idx == -1 or len(headers) < 8:
                 continue
                 
-            current_team_id = team_ids[valid_table_count] if valid_table_count < len(team_ids) else None
-            valid_table_count += 1
+            # --- LUOTETTAVA JOUKKUELOGIIKKA ---
+            # Taulukon ensimmäinen otsikkosolu on itse joukkueen nimi (esim. "Falcons"),
+            # kuten debug-tulosteesta nähtiin. Verrataan sitä match-info-boxista
+            # saatuihin nimiin, jolloin oikea team_id löytyy varmasti - ei arvausta
+            # muiden sivulla olevien linkkien perusteella.
+            current_team_id = None
+            table_team_name = headers[0].text.strip().lower() if headers else ""
+            
+            if table_team_name in team_name_to_id:
+                current_team_id = team_name_to_id[table_team_name]
+            else:
+                # Varasuunnitelma: osittainen täsmäys, jos nimissä pieniä eroja
+                # (esim. lyhenteet tai ylimääräiset merkit otsikossa)
+                for name, tid in team_name_to_id.items():
+                    if name in table_team_name or table_team_name in name:
+                        current_team_id = tid
+                        break
+            
+            if not current_team_id:
+                print(f"     [!] Ei tunnistettu joukkuetta taulukon otsikosta '{headers[0].text.strip() if headers else '?'}', ohitetaan taulukko.")
+                continue
+            # ----------------------------------------
             
             for row in rows[1:]:
                 cols = row.find_all('td')
@@ -186,14 +248,12 @@ def get_match_stats(driver, conn, match_id, match_url, map_name):
                 player_name = player_link.text.strip()
                 if not player_id: continue
                 
-                if current_team_id:
-                    c.execute("""INSERT INTO players (id, team_id, name) VALUES (?, ?, ?)
-                                 ON CONFLICT(id) DO UPDATE SET team_id=excluded.team_id, name=excluded.name""", 
-                              (player_id, current_team_id, player_name))
-                else:
-                    c.execute("INSERT OR IGNORE INTO players (id, name) VALUES (?, ?)", (player_id, player_name))
+                c.execute("""INSERT INTO players (id, team_id, name) VALUES (?, ?, ?)
+                             ON CONFLICT(id) DO UPDATE SET team_id=excluded.team_id, name=excluded.name""", 
+                          (player_id, current_team_id, player_name))
                 
                 try:
+                    # HLTV:n teksti on esim "22 (5)" -> kokonaistapot ja headshotit erikseen
                     k_full = cols[kills_idx].text.strip()
                     d_full = cols[deaths_idx].text.strip()
                     
@@ -206,6 +266,7 @@ def get_match_stats(driver, conn, match_id, match_url, map_name):
                     kills = int(k_str)
                     deaths = int(d_str)
                     
+                    # Poimitaan headshot-luku sulkeiden sisältä, esim "22 (5)" -> 5
                     headshots = 0
                     if '(' in k_full:
                         hs_str = k_full.split('(')[1].replace(')', '').strip()
@@ -214,13 +275,21 @@ def get_match_stats(driver, conn, match_id, match_url, map_name):
                     
                     c.execute("INSERT OR IGNORE INTO player_stats (match_id, player_id, kills, headshots, deaths) VALUES (?, ?, ?, ?, ?)",
                               (match_id, player_id, kills, headshots, deaths))
-                    # Poistettu printtaus jokaisesta pelaajasta erikseen, jotta terminaali ei täyty liikaa isossa ajossa
+                    print(f"     DEBUG: Tallennettu statsit -> {player_name} (team {current_team_id}): {kills} K ({headshots} HS) / {deaths} D")
                 except Exception as e:
-                    pass
+                    print(f"     [!] Virhe lukujen käsittelyssä pelaajalle {player_name}: {e}")
 
         conn.commit()
     except Exception as e:
         print(f"  Virhe karttadatan parsimisessa: {e}")
+
+# Jos joukkueelle ei löydy aiempaa scrape-merkintää (eli sitä ei ole koskaan
+# haettu), käytetään tätä oletushistoriaa ensimmäisellä ajokerralla.
+DEFAULT_LOOKBACK_DAYS = 180
+
+# Kuinka monta päivää taaksepäin viimeisimmästä scrape-päivästä varmuuden
+# vuoksi vielä haetaan uudelleen (esim. jos ottelu lisättiin HLTV:hen viiveellä).
+SAFETY_BUFFER_DAYS = 2
 
 if __name__ == "__main__":
     print("Käynnistetään selain...")
@@ -231,15 +300,35 @@ if __name__ == "__main__":
     try:
         teams = get_top_30_teams(driver, db_conn)
         if teams:
-            # MUUTOS 2: Poistettu [:3] rajoitus, käy nyt läpi KAIKKI löydetyt joukkueet
-            for team in teams: 
-                matches = get_team_match_links(driver, team['id'], team['name'])
-                for match in matches: 
+            for team in teams:
+                today = datetime.now()
+                last_scraped_str = get_last_scraped_date(db_conn, team['id'])
+                
+                if last_scraped_str:
+                    # Jatketaan siitä mihin viime kerralla jäätiin (pienellä puskurilla)
+                    last_scraped = datetime.strptime(last_scraped_str, '%Y-%m-%d')
+                    start_date = last_scraped - timedelta(days=SAFETY_BUFFER_DAYS)
+                    print(f"  [i] {team['name']} on skrapattu aiemmin ({last_scraped_str}), haetaan vain uudet ottelut.")
+                else:
+                    # Ensimmäinen kerta tälle joukkueelle -> haetaan koko oletushistoria
+                    start_date = today - timedelta(days=DEFAULT_LOOKBACK_DAYS)
+                    print(f"  [i] {team['name']} ei ole skrapattu aiemmin, haetaan viimeiset {DEFAULT_LOOKBACK_DAYS} päivää.")
+                
+                matches = get_team_match_links(driver, team['id'], team['name'], start_date, today)
+                
+                for match in matches:
+                    if match_already_scraped(db_conn, match['id']):
+                        print(f"  [i] Kartta {match['map_name']} (ID: {match['id']}) on jo tietokannassa, ohitetaan.")
+                        continue
+                    
                     get_match_stats(driver, db_conn, match['id'], match['url'], match['map_name'])
                     
                     wait_time = random.uniform(6.0, 10.0)
                     print(f"  Odotetaan {wait_time:.1f} sekuntia ennen seuraavaa karttaa...")
                     time.sleep(wait_time)
+                
+                # Merkitään joukkue haetuksi tähän päivään asti seuraavaa ajoa varten
+                update_scraped_date(db_conn, team['id'], today.strftime('%Y-%m-%d'))
                     
         print("\nKaikki valmista! Data on tietokannassa 'hltv_data.db'.")
     finally:
