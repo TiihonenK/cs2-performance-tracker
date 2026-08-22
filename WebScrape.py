@@ -429,7 +429,7 @@ if __name__ == "__main__":
                     else:
                         print(f"  [!] Kartta {match['map_name']} (ID: {match['id']}) epäonnistui kahdesti, ohitetaan lopullisesti.")
                     
-                    wait_time = random.uniform(6.0, 10.0)
+                    wait_time = random.uniform(3.0, 7.0)
                     print(f"  Odotetaan {wait_time:.1f} sekuntia ennen seuraavaa karttaa...")
                     time.sleep(wait_time)
                 
