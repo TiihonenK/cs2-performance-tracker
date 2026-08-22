@@ -1,4 +1,5 @@
 import undetected_chromedriver as uc
+from selenium.common.exceptions import WebDriverException, TimeoutException
 from bs4 import BeautifulSoup
 import sqlite3
 import time
@@ -16,9 +17,16 @@ def setup_database():
     c.execute('''CREATE TABLE IF NOT EXISTS teams 
                  (id TEXT PRIMARY KEY, name TEXT, url TEXT)''')
     
-    # Pelaajat
+    # Pelaajat. team_name tallennetaan team_id:n sijaan/lisäksi luettavuuden vuoksi.
+    # last_match_date kertoo minkä ottelun perusteella joukkue on viimeksi päivitetty -
+    # näin vanhempi ottelu ei voi enää ylikirjoittaa tuoreempaa joukkuetietoa,
+    # vaikka otteluita käsiteltäisiin sekaisin järjestyksessä eri ajokerroilla.
     c.execute('''CREATE TABLE IF NOT EXISTS players 
-                 (id TEXT PRIMARY KEY, team_id TEXT, name TEXT)''')
+                 (id TEXT PRIMARY KEY, 
+                  team_id TEXT, 
+                  team_name TEXT,
+                  name TEXT,
+                  last_match_date TEXT)''')
     
     # Ottelut / Kartat
     c.execute('''CREATE TABLE IF NOT EXISTS matches
@@ -27,7 +35,8 @@ def setup_database():
                   team2_id TEXT, 
                   score_team1 INTEGER, 
                   score_team2 INTEGER,
-                  map_name TEXT)''')
+                  map_name TEXT,
+                  match_date TEXT)''')
                   
     # Pelaajien tilastot yksittäisessä kartassa
     c.execute('''CREATE TABLE IF NOT EXISTS player_stats
@@ -67,6 +76,14 @@ def match_already_scraped(conn, match_id):
     c = conn.cursor()
     c.execute("SELECT 1 FROM matches WHERE id = ?", (match_id,))
     return c.fetchone() is not None
+
+def create_driver():
+    """Luo (tai uudelleenluo) selaininstanssin. Käytetään myös silloin, kun
+    selain jumiutuu/kaatuu kesken ajon ja tarvitaan uusi istunto."""
+    options = uc.ChromeOptions()
+    driver = uc.Chrome(options=options, use_subprocess=True, version_main=150)
+    driver.set_page_load_timeout(60)  # estää yksittäistä sivulatausta jäämästä ikuisesti jumiin
+    return driver
 
 def check_cloudflare(driver):
     """Tarkistaa, onko selain jumissa Cloudflaren tarkistusruudussa ja yrittää odottaa."""
@@ -114,6 +131,39 @@ def get_top_30_teams(driver, conn):
     print(f"Löydettiin {len(teams_data)} joukkuetta (Top 30).")
     return teams_data
 
+def extract_match_date(cell):
+    """Yrittää lukea tarkan ottelupäivän solusta. HLTV merkitsee päivämäärän usein
+    'data-unix'-attribuuttiin (millisekunteina), mikä on luotettavin tapa lukea se.
+    Jos sitä ei löydy, yritetään tulkita näkyvä teksti muutamalla yleisellä formaatilla."""
+    if cell is None:
+        return None
+    
+    # Tarkistetaan ensin itse solu, sitten kaikki lapsielementit (HLTV saattaa
+    # laittaa data-unix joko suoraan <td>:hen tai sen sisällä olevaan <span>/<div>:iin)
+    if cell.has_attr('data-unix'):
+        try:
+            unix_ms = int(cell['data-unix'])
+            return datetime.utcfromtimestamp(unix_ms / 1000).strftime('%Y-%m-%d')
+        except (ValueError, KeyError):
+            pass
+    
+    unix_element = cell.find(attrs={'data-unix': True})
+    if unix_element:
+        try:
+            unix_ms = int(unix_element['data-unix'])
+            return datetime.utcfromtimestamp(unix_ms / 1000).strftime('%Y-%m-%d')
+        except (ValueError, KeyError):
+            pass
+    
+    raw_text = cell.text.strip()
+    for fmt in ('%d/%m/%y', '%Y-%m-%d', '%d/%m/%Y', '%d.%m.%Y', '%d-%m-%Y', '%B %d %Y', '%d %B %Y', '%b %d %Y', '%d %b %Y'):
+        try:
+            return datetime.strptime(raw_text, fmt).strftime('%Y-%m-%d')
+        except ValueError:
+            continue
+    
+    return None
+
 def get_team_match_links(driver, team_id, team_name, start_date, end_date):
     print(f"\nHaetaan joukkueen {team_name} (ID: {team_id}) kartat aikaväliltä {start_date.strftime('%Y-%m-%d')} - {end_date.strftime('%Y-%m-%d')}...")
     
@@ -136,14 +186,26 @@ def get_team_match_links(driver, team_id, team_name, start_date, end_date):
         if len(cols) >= 6:
             map_name = cols[4].text.strip()
             link_elem = row.find('a', href=lambda href: href and '/stats/matches/mapstatsid/' in href)
+            
+            # Oletetaan päivämäärän olevan ensimmäisessä sarakkeessa (HLTV:n yleinen tapa).
+            # Tarkista alla oleva DEBUG-tuloste - jos päivämäärä tulkitaan väärin tai
+            # jää None:ksi, tarkista mistä sarakkeesta se todella löytyy ja muuta cols[0].
+            match_date_iso = extract_match_date(cols[0])
+            print(f"     DEBUG: Ottelurivin pvm-teksti: '{cols[0].text.strip()}' -> tulkittu: {match_date_iso}")
+            
             if link_elem:
                 match_id = next((part for part in link_elem['href'].split('/') if part.isdigit()), None)
-                match_links.append({'id': match_id, 'url': f"{BASE_URL}{link_elem['href']}", 'map_name': map_name})
+                match_links.append({
+                    'id': match_id, 
+                    'url': f"{BASE_URL}{link_elem['href']}", 
+                    'map_name': map_name,
+                    'match_date': match_date_iso if match_date_iso else '0000-00-00'  # varmuuden vuoksi vanhin mahdollinen, jos pvm ei löydy
+                })
             
     print(f"  Löydettiin {len(match_links)} pelattua karttaa joukkueelle {team_name}.")
     return match_links
 
-def get_match_stats(driver, conn, match_id, match_url, map_name):
+def get_match_stats(driver, conn, match_id, match_url, map_name, match_date):
     print(f"  -> Haetaan tilastot kartalle: {map_name} (ID: {match_id})...")
     driver.get(match_url)
     
@@ -181,16 +243,17 @@ def get_match_stats(driver, conn, match_id, match_url, map_name):
             t1_name = t1_link.text.strip() if t1_link else ""
             t2_name = t2_link.text.strip() if t2_link else ""
             
+            # team_name_to_id: lower(nimi) -> (team_id, alkuperäinen nimi oikeilla kirjaimilla)
             if t1_id and t1_name:
-                team_name_to_id[t1_name.lower()] = t1_id
+                team_name_to_id[t1_name.lower()] = (t1_id, t1_name)
             if t2_id and t2_name:
-                team_name_to_id[t2_name.lower()] = t2_id
+                team_name_to_id[t2_name.lower()] = (t2_id, t2_name)
             
             s1 = int(team_left.find('div', class_='bold').text.strip()) if team_left.find('div', class_='bold') else 0
             s2 = int(team_right.find('div', class_='bold').text.strip()) if team_right.find('div', class_='bold') else 0
             
-            c.execute("INSERT OR IGNORE INTO matches (id, team1_id, team2_id, score_team1, score_team2, map_name) VALUES (?, ?, ?, ?, ?, ?)",
-                      (match_id, t1_id, t2_id, s1, s2, map_name))
+            c.execute("INSERT OR IGNORE INTO matches (id, team1_id, team2_id, score_team1, score_team2, map_name, match_date) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                      (match_id, t1_id, t2_id, s1, s2, map_name, match_date))
     
         stats_tables = soup.find_all('table', class_='stats-table')
         
@@ -220,16 +283,21 @@ def get_match_stats(driver, conn, match_id, match_url, map_name):
             # saatuihin nimiin, jolloin oikea team_id löytyy varmasti - ei arvausta
             # muiden sivulla olevien linkkien perusteella.
             current_team_id = None
+            current_team_name = None
             table_team_name = headers[0].text.strip().lower() if headers else ""
             
-            if table_team_name in team_name_to_id:
-                current_team_id = team_name_to_id[table_team_name]
-            else:
+            if table_team_name and table_team_name in team_name_to_id:
+                current_team_id, current_team_name = team_name_to_id[table_team_name]
+            elif table_team_name and len(table_team_name) > 2:
                 # Varasuunnitelma: osittainen täsmäys, jos nimissä pieniä eroja
-                # (esim. lyhenteet tai ylimääräiset merkit otsikossa)
-                for name, tid in team_name_to_id.items():
+                # (esim. lyhenteet tai ylimääräiset merkit otsikossa).
+                # HUOM: table_team_name tarkistetaan ensin ei-tyhjäksi ja riittävän
+                # pitkäksi, koska tyhjä merkkijono "" täsmäisi Pythonissa aina
+                # ensimmäiseen joukkueeseen ("" in mikä_tahansa_nimi == True),
+                # mikä aiheutti yksittäisiä pelaajia väärällä team_id:llä.
+                for name, (tid, tname) in team_name_to_id.items():
                     if name in table_team_name or table_team_name in name:
-                        current_team_id = tid
+                        current_team_id, current_team_name = tid, tname
                         break
             
             if not current_team_id:
@@ -248,9 +316,29 @@ def get_match_stats(driver, conn, match_id, match_url, map_name):
                 player_name = player_link.text.strip()
                 if not player_id: continue
                 
-                c.execute("""INSERT INTO players (id, team_id, name) VALUES (?, ?, ?)
-                             ON CONFLICT(id) DO UPDATE SET team_id=excluded.team_id, name=excluded.name""", 
-                          (player_id, current_team_id, player_name))
+                # Päivitetään pelaajan joukkue vain, jos tämä ottelu on yhtä tuore tai
+                # tuoreempi kuin viimeksi tallennettu - näin vanha ottelu ei voi enää
+                # ylikirjoittaa tuoreempaa joukkuetietoa (esim. jos pelaaja on vaihtanut
+                # joukkuetta 4kk sitten pelatun ottelun jälkeen).
+                c.execute("SELECT last_match_date FROM players WHERE id = ?", (player_id,))
+                existing = c.fetchone()
+                should_update_team = True
+                if existing and existing[0] and match_date and match_date < existing[0]:
+                    should_update_team = False
+                
+                if should_update_team:
+                    c.execute("""INSERT INTO players (id, team_id, team_name, name, last_match_date) VALUES (?, ?, ?, ?, ?)
+                                 ON CONFLICT(id) DO UPDATE SET 
+                                    team_id=excluded.team_id, 
+                                    team_name=excluded.team_name, 
+                                    name=excluded.name,
+                                    last_match_date=excluded.last_match_date""", 
+                              (player_id, current_team_id, current_team_name, player_name, match_date))
+                else:
+                    # Vanhempi ottelu: päivitetään vain nimi (jos muuttunut), ei joukkuetta
+                    c.execute("""INSERT OR IGNORE INTO players (id, team_id, team_name, name, last_match_date) 
+                                 VALUES (?, ?, ?, ?, ?)""", 
+                              (player_id, current_team_id, current_team_name, player_name, match_date))
                 
                 try:
                     # HLTV:n teksti on esim "22 (5)" -> kokonaistapot ja headshotit erikseen
@@ -293,8 +381,7 @@ SAFETY_BUFFER_DAYS = 2
 
 if __name__ == "__main__":
     print("Käynnistetään selain...")
-    options = uc.ChromeOptions()
-    driver = uc.Chrome(options=options, use_subprocess=True, version_main=150) 
+    driver = create_driver()
     db_conn = setup_database()
     
     try:
@@ -321,7 +408,26 @@ if __name__ == "__main__":
                         print(f"  [i] Kartta {match['map_name']} (ID: {match['id']}) on jo tietokannassa, ohitetaan.")
                         continue
                     
-                    get_match_stats(driver, db_conn, match['id'], match['url'], match['map_name'])
+                    # Yritetään hakea kartan tilastot. Jos selain jumiutuu tai kaatuu
+                    # (esim. ReadTimeoutError, WebDriverException), käynnistetään
+                    # selain uudelleen ja yritetään sama kartta vielä kerran ennen
+                    # kuin se lopulta ohitetaan - näin koko ajo ei kaadu yhteen
+                    # yksittäiseen ongelmalliseen sivulataukseen.
+                    for attempt in range(2):
+                        try:
+                            get_match_stats(driver, db_conn, match['id'], match['url'], match['map_name'], match['match_date'])
+                            break
+                        except (WebDriverException, TimeoutException, Exception) as e:
+                            print(f"  [VIRHE] Selain jumiutui/kaatui kartalla {match['map_name']} (yritys {attempt + 1}/2): {e}")
+                            print("  Käynnistetään selain uudelleen...")
+                            try:
+                                driver.quit()
+                            except Exception:
+                                pass
+                            time.sleep(5)
+                            driver = create_driver()
+                    else:
+                        print(f"  [!] Kartta {match['map_name']} (ID: {match['id']}) epäonnistui kahdesti, ohitetaan lopullisesti.")
                     
                     wait_time = random.uniform(6.0, 10.0)
                     print(f"  Odotetaan {wait_time:.1f} sekuntia ennen seuraavaa karttaa...")
@@ -333,5 +439,5 @@ if __name__ == "__main__":
         print("\nKaikki valmista! Data on tietokannassa 'hltv_data.db'.")
     finally:
         try: driver.quit()
-        except OSError: pass
+        except Exception: pass
         db_conn.close()

@@ -4,13 +4,13 @@ import pandas as pd
 
 from team_elo_calculator import calculate_map_elos, get_expected_score
 from players_props import get_player_stats, simulate_player_kills
+from players_props import get_player_stats, simulate_player_kills, simulate_player_headshots
 
 # 1. Sivun perusasetukset
 st.set_page_config(page_title="CS2 Vetomalli", layout="wide", page_icon="🎯")
 
 # 2. Otsikko ja kuvaus
-st.title("🎯 CS2 Vedonlyöntimalli")
-st.markdown("Valitse joukkueet tai pelaajat alasvetovalikoista nähdäksesi todennäköisyydet ja kerroinrajat.")
+st.title("CS2 Vedonlyöntimalli")
 
 # 3. Haetaan kaikki tiimit tietokannasta valikkoja varten
 conn = sqlite3.connect('hltv_data.db')
@@ -19,7 +19,7 @@ conn.close()
 team_names_list = teams_df['name'].tolist()
 
 # 4. Luodaan välilehdet
-tab1, tab2 = st.tabs(["⚔️ Otteluennusteet (Tiimit)", "🔫 Pelaajavedot (Monte Carlo)"])
+tab1, tab2, tab3 = st.tabs(["Otteluennusteet", "Pelaajavedot", "Pelaajavedot (Headshot)"])
 
 # ==========================================
 # VÄLILEHTI 1: JOUKKUEIDEN VOIMASUHTEET
@@ -82,8 +82,7 @@ with tab1:
 # VÄLILEHTI 2: PELAAJAVEDOT (MONTE CARLO)
 # ==========================================
 with tab2:
-    st.header("🔫 Pelaajavedot (Tappolinjat)")
-    st.markdown("Arvioi pelaajan tappojen yli/alle -rajat yhdistämällä vastustajan taso ja Monte Carlo -simulaatio.")
+    st.header("Pelaajavedot (Tappolinja)")
     
     # 1. Valitaan joukkueet ottelun pituuden arviointia varten
     col1, col2 = st.columns(2)
@@ -171,6 +170,76 @@ with tab2:
                         st.metric(label=f"UNDER {tapporaja}", value=f"{prob_under*100:.1f} %", delta=f"Kerroinraja: {odds_under:.2f}", delta_color="off")
                         
         elif pelaajan_tiimi == vastustaja_tiimi:
+            st.warning("Valitse kaksi eri joukkuetta!")
+        else:
+            st.warning("Täytä pelaaja ja molemmat joukkueet.")
+
+# ==========================================
+# VÄLILEHTI 3: PELAAJAVEDOT (HEADSHOTIT)
+# ==========================================
+with tab3:
+    st.header("🎯 Pelaajavedot (Headshot-linjat)")
+    st.markdown("Arvioi pelaajan pääosumien yli/alle -rajat yhdistämällä vastustajan taso ja Monte Carlo -simulaatio.")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        hs_pelaajan_tiimi = st.selectbox("Pelaajan joukkue (HS):", team_names_list, index=None, placeholder="Valitse joukkue...")
+    with col2:
+        hs_vastustaja_tiimi = st.selectbox("Vastustajan joukkue (HS):", team_names_list, index=None, placeholder="Valitse vastustaja...")
+        
+    hs_p_col1, hs_p_col2, hs_p_col3 = st.columns(3)
+    with hs_p_col1:
+        hs_pelaaja_nimi = st.selectbox("Valitse pelaaja (HS):", player_list, index=None, placeholder="Esim. b1t")
+    with hs_p_col2:
+        hs_kartta_nimi = st.selectbox("Kartta (HS):", ["Mirage", "Dust2", "Nuke", "Inferno", "Anubis", "Vertigo", "Ancient"])
+    with hs_p_col3:
+        # Headshot-rajat ovat yleensä paljon matalampia, esim 7.5
+        hs_raja = st.number_input("Headshot-raja (esim. 7.5):", value=7.5, step=0.5)
+
+    if st.button("Laske headshot-todennäköisyydet", type="primary"):
+        if hs_pelaaja_nimi and hs_pelaajan_tiimi and hs_vastustaja_tiimi and hs_pelaajan_tiimi != hs_vastustaja_tiimi:
+            with st.spinner("Lasketaan ottelun kestoa ja simuloidaan 10 000 skenaariota..."):
+                
+                # Arvioidaan ottelun pituus Elosta
+                elos, names_dict = calculate_map_elos()
+                t1_id = teams_df.loc[teams_df['name'] == hs_pelaajan_tiimi, 'id'].values[0]
+                t2_id = teams_df.loc[teams_df['name'] == hs_vastustaja_tiimi, 'id'].values[0]
+                
+                elo1 = elos.get(hs_kartta_nimi, {}).get(t1_id, 1500)
+                elo2 = elos.get(hs_kartta_nimi, {}).get(t2_id, 1500)
+                
+                prob1 = get_expected_score(elo1, elo2)
+                prob2 = get_expected_score(elo2, elo1)
+                
+                max_prob = max(prob1, prob2)
+                ennustetut_kierrokset = 22.5 - ((max_prob - 0.5) * 9.0)
+                
+                # Haetaan statsit (Nyt sisältää myös HPR!)
+                data = get_player_stats(hs_pelaaja_nimi, hs_kartta_nimi)
+                
+                if not data:
+                    st.error(f"Pelaajalta '{hs_pelaaja_nimi}' ei löytynyt tilastoja kartasta '{hs_kartta_nimi}'.")
+                else:
+                    if data['rounds_played'] < 100:
+                        st.warning(f"⚠️ Varoitus: Pelaajalla on vain {data['rounds_played']} pelattua kierrosta tässä kartassa.")
+                    
+                    # Simuloidaan HEADSHOTIT (ei normi tappoja)
+                    prob_over, prob_under = simulate_player_headshots(data, hs_raja, ennustetut_kierrokset)
+                    
+                    odds_over = 1 / prob_over if prob_over > 0 else 0
+                    odds_under = 1 / prob_under if prob_under > 0 else 0
+                    
+                    st.write("---")
+                    st.subheader(f"🎯 Tulokset: {data['name']} @ {data['map'].capitalize()} vs {hs_vastustaja_tiimi}")
+                    st.caption(f"Historiallinen HS%: **{data['hs_percent']:.1f}%** | HPR: {data['hpr']:.3f} | Ennustettu kesto: **{ennustetut_kierrokset:.1f} kierrosta**")
+                    
+                    res_col1, res_col2 = st.columns(2)
+                    with res_col1:
+                        st.metric(label=f"OVER {hs_raja} HS", value=f"{prob_over*100:.1f} %", delta=f"Kerroinraja: {odds_over:.2f}", delta_color="off")
+                    with res_col2:
+                        st.metric(label=f"UNDER {hs_raja} HS", value=f"{prob_under*100:.1f} %", delta=f"Kerroinraja: {odds_under:.2f}", delta_color="off")
+                        
+        elif hs_pelaajan_tiimi == hs_vastustaja_tiimi:
             st.warning("Valitse kaksi eri joukkuetta!")
         else:
             st.warning("Täytä pelaaja ja molemmat joukkueet.")
