@@ -1,11 +1,13 @@
-Muutosloki
+## ##muutoslogi
 
-[1.0] - 2026-08-15
+Pinnaclelta joukkueiden karttakohtaiset kertoimet
+ei tarvitse valita enään karttaa
 
-- Web-scrape toimii täysin.
-- Hakee top 5 joukkueet viimeiseltä 2kk ajalta.
+Tappovedoissa pitää vain valita tiimit, lisätä pinnaclen kertoimet
+--> Näyttää kummankin tiimin pelaajat (projected kills) (kpr, simuloitu kpr, )
+--> Voisi näyttää prosentuaalisesti overin ja underin mahdollisuuden
+--> arvioi kierrosten määrän
 
-[1.1] - 2026-08-16
+pinncalen kertoimien mukaan voitettujen ja hävittyjen roundien määrät ja tämä vaikuttaisi kpr
 
-- Lisätty karttakohtaiset simulaatiot
-- lisätty pelaajakohtaiset tappojen over/under simulaatiot
+Scrapee bettisivuja?????
