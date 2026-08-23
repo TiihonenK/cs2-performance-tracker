@@ -118,6 +118,9 @@ with tab1:
 # ==========================================
 # VÄLILEHTI 2: PELAAJAVEDOT (MONTE CARLO)
 # ==========================================
+# ==========================================
+# VÄLILEHTI 2: PELAAJAVEDOT (MONTE CARLO)
+# ==========================================
 with tab2:
     st.header("Pelaajavedot (Tappolinja)")
     
@@ -128,15 +131,12 @@ with tab2:
         vastustaja_tiimi = st.selectbox("Vastustajan joukkue:", team_names_list, index=None, placeholder="Valitse vastustaja...", key="t2_t2")
         
     player_list = []
-    fallback_kaytossa = False
-    
     if pelaajan_tiimi:
         conn = sqlite3.connect('hltv_data.db')
         t1_id = int(teams_df.loc[teams_df['name'] == pelaajan_tiimi, 'id'].values[0])
         players_df = pd.read_sql_query("SELECT DISTINCT name FROM players WHERE team_id = ? ORDER BY name", conn, params=(t1_id,))
         if players_df.empty:
             players_df = pd.read_sql_query("SELECT DISTINCT name FROM players ORDER BY name", conn)
-            fallback_kaytossa = True
         conn.close()
         player_list = players_df['name'].tolist()
 
@@ -147,14 +147,13 @@ with tab2:
             pelaaja_nimi = None
         else:
             pelaaja_nimi = st.selectbox("Valitse pelaaja:", player_list, key="t2_p")
-            if fallback_kaytossa:
-                st.caption("⚠️ Tietokannasta puuttuu joukkuelinkki. Näytetään kaikki pelaajat.")
             
     with p_col2:
         kartta_nimi = st.selectbox("Kartta:", ["Mirage", "Dust2", "Nuke", "Inferno", "Anubis", "Vertigo", "Ancient"], key="t2_m")
     with p_col3:
         tapporaja = st.number_input("Tapporaja (esim. 18.5):", value=18.5, step=0.5, key="t2_r")
 
+    # 1. Laske-painike tallentaa tulokset muistiin
     if st.button("Laske pelaajan todennäköisyydet", type="primary"):
         if pelaaja_nimi and pelaajan_tiimi and vastustaja_tiimi and pelaajan_tiimi != vastustaja_tiimi:
             with st.spinner("Lasketaan ottelun kestoa ja simuloidaan 10 000 skenaariota..."):
@@ -169,40 +168,73 @@ with tab2:
                 data = get_player_stats(pelaaja_nimi, kartta_nimi)
                 
                 if not data:
-                    st.error(f"Pelaajalta '{pelaaja_nimi}' ei löytynyt tilastoja kartasta '{kartta_nimi}'.")
+                    st.error(f"Tilastoja ei löytynyt.")
                 else:
-                    if data['rounds_played'] < 100:
-                        st.warning(f"⚠️ Varoitus: Pelaajalla on vain {data['rounds_played']} pelattua kierrosta tässä kartassa.")
-                    
                     prob_over, prob_under = simulate_player_kills(data, tapporaja, ennustetut_kierrokset)
-                    odds_over = 1 / prob_over if prob_over > 0 else 0
-                    odds_under = 1 / prob_under if prob_under > 0 else 0
-                    
-                    st.write("---")
-                    st.subheader(f"Tulokset: {data['name']} @ {data['map'].capitalize()} vs {vastustaja_tiimi}")
-                    st.caption(f"Historiallinen KPR: {data['kpr']:.3f} | Mallin ennustama ottelun pituus: **{ennustetut_kierrokset:.1f} kierrosta**")
-                    
-                    res_col1, res_col2 = st.columns(2)
-                    with res_col1:
-                        st.metric(label=f"OVER {tapporaja}", value=f"{prob_over*100:.1f} %", delta=f"Kerroinraja: {odds_over:.2f}", delta_color="off")
-                    with res_col2:
-                        st.metric(label=f"UNDER {tapporaja}", value=f"{prob_under*100:.1f} %", delta=f"Kerroinraja: {odds_under:.2f}", delta_color="off")
+                    # TALLENNUS SESSION STATEEN
+                    st.session_state['t2_data'] = {
+                        'nimi': data['name'], 'kartta': data['map'], 'kpr': data['kpr'],
+                        'rounds': ennustetut_kierrokset, 'over': prob_over, 'under': prob_under,
+                        'raja': tapporaja, 'vastustaja': vastustaja_tiimi
+                    }
 
-                    # --- VEDON TALLENNUS (TAB 2) ---
-                    with st.expander("➕ Kirjaa veto tästä kohteesta", expanded=False):
-                        with st.form("bet_form_kills"):
-                            b_desc = st.text_input("Vedon kuvaus", value=f"{pelaaja_nimi} OVER {tapporaja} tappoa (vs {vastustaja_tiimi})")
-                            c1, c2 = st.columns(2)
-                            b_stake = c1.number_input("Panos (€)", min_value=1.0, value=10.0, step=1.0)
-                            b_odds = c2.number_input("Kerroin", min_value=1.01, value=round(odds_over, 2), step=0.01)
-                            if st.form_submit_button("Tallenna veto"):
-                                save_bet("Tapot", b_desc, b_stake, b_odds)
-                        
-        elif pelaajan_tiimi == vastustaja_tiimi:
-            st.warning("Valitse kaksi eri joukkuetta!")
-        else:
-            st.warning("Täytä pelaaja ja molemmat joukkueet.")
+    # 2. Näytetään tulokset muistista (Irrotettu napista!)
+    # 2. Näytetään tulokset muistista (Tappolinjat)
+    if 't2_data' in st.session_state:
+        d = st.session_state['t2_data']
+        odds_over = 1 / d['over'] if d['over'] > 0 else 0
+        odds_under = 1 / d['under'] if d['under'] > 0 else 0
+        
+        st.write("---")
+        st.subheader(f"Tulokset: {d['nimi']} @ {d['kartta'].capitalize()} vs {d['vastustaja']}")
+        st.caption(f"Historiallinen KPR: {d['kpr']:.3f} | Ennustettu pituus: **{d['rounds']:.1f} kierrosta**")
+        
+        res_col1, res_col2 = st.columns(2)
+        with res_col1:
+            st.metric(label=f"OVER {d['raja']}", value=f"{d['over']*100:.1f} %", delta=f"Kerroinraja: {odds_over:.2f}", delta_color="off")
+        with res_col2:
+            st.metric(label=f"UNDER {d['raja']}", value=f"{d['under']*100:.1f} %", delta=f"Kerroinraja: {odds_under:.2f}", delta_color="off")
 
+        # --- UUSI: EV-LASKURI ---
+        st.write("📊 **EV-Laskuri (Etsi ylikertoimet)**")
+        ev_col1, ev_col2 = st.columns(2)
+        with ev_col1:
+            bookie_over = st.number_input("Syötä bookkerin OVER-kerroin:", min_value=1.0, value=1.0, step=0.01, key="ev_over_t2")
+            if bookie_over > 1.0:
+                ev_over = (d['over'] * bookie_over - 1) * 100
+                color = "green" if ev_over > 0 else "red"
+                st.markdown(f"Odotusarvo: <strong style='color:{color}'>{ev_over:+.1f} %</strong>", unsafe_allow_html=True)
+                
+        with ev_col2:
+            bookie_under = st.number_input("Syötä bookkerin UNDER-kerroin:", min_value=1.0, value=1.0, step=0.01, key="ev_under_t2")
+            if bookie_under > 1.0:
+                ev_under = (d['under'] * bookie_under - 1) * 100
+                color = "green" if ev_under > 0 else "red"
+                st.markdown(f"Odotusarvo: <strong style='color:{color}'>{ev_under:+.1f} %</strong>", unsafe_allow_html=True)
+        st.write("---")
+
+        with st.expander("➕ Kirjaa veto tästä kohteesta", expanded=True):
+            # Valintanappi lomakkeen ulkopuolelle, jotta teksti päivittyy dynaamisesti
+            suunta = st.radio("Vedon suunta:", ["OVER", "UNDER"], horizontal=True, key="suunta_t2")
+            
+            with st.form("bet_form_kills"):
+                b_desc = st.text_input("Vedon kuvaus", value=f"{d['nimi']} {suunta} {d['raja']}, {d['kartta'].capitalize()}, {d['vastustaja']}")
+                
+                c1, c2 = st.columns(2)
+                b_stake = c1.number_input("Panos (€)", min_value=1.0, value=10.0, step=1.0)
+                
+                # Valitaan oletuskerroin automaattisesti suunnan mukaan!
+                if suunta == "OVER":
+                    default_odds = bookie_over if bookie_over > 1.0 else round(odds_over, 2)
+                else:
+                    default_odds = bookie_under if bookie_under > 1.0 else round(odds_under, 2)
+                    
+                b_odds = c2.number_input("Kerroin", min_value=1.01, value=float(default_odds), step=0.01)
+                
+                if st.form_submit_button("Tallenna veto"):
+                    save_bet("Tapot", b_desc, b_stake, b_odds)
+                    del st.session_state['t2_data']
+                    st.rerun()
 
 # ==========================================
 # VÄLILEHTI 3: PELAAJAVEDOT (HEADSHOTIT)
@@ -217,7 +249,6 @@ with tab3:
     with col2:
         hs_vastustaja_tiimi = st.selectbox("Vastustajan joukkue (HS):", team_names_list, index=None, placeholder="Valitse vastustaja...", key="t3_t2")
         
-    # Sama dynaaminen pelaajahaku HS-puolelle
     hs_player_list = []
     if hs_pelaajan_tiimi:
         conn = sqlite3.connect('hltv_data.db')
@@ -243,7 +274,7 @@ with tab3:
 
     if st.button("Laske headshot-todennäköisyydet", type="primary"):
         if hs_pelaaja_nimi and hs_pelaajan_tiimi and hs_vastustaja_tiimi and hs_pelaajan_tiimi != hs_vastustaja_tiimi:
-            with st.spinner("Lasketaan ottelun kestoa ja simuloidaan 10 000 skenaariota..."):
+            with st.spinner("Simuloidaan..."):
                 elos, names_dict = calculate_map_elos()
                 t1_id = teams_df.loc[teams_df['name'] == hs_pelaajan_tiimi, 'id'].values[0]
                 t2_id = teams_df.loc[teams_df['name'] == hs_vastustaja_tiimi, 'id'].values[0]
@@ -254,37 +285,70 @@ with tab3:
                 ennustetut_kierrokset = 22.5 - ((max(prob1, prob2) - 0.5) * 9.0)
                 data = get_player_stats(hs_pelaaja_nimi, hs_kartta_nimi)
                 
-                if not data:
-                    st.error(f"Pelaajalta '{hs_pelaaja_nimi}' ei löytynyt tilastoja kartasta '{hs_kartta_nimi}'.")
-                else:
+                if data:
                     prob_over, prob_under = simulate_player_headshots(data, hs_raja, ennustetut_kierrokset)
-                    odds_over = 1 / prob_over if prob_over > 0 else 0
-                    odds_under = 1 / prob_under if prob_under > 0 else 0
+                    st.session_state['t3_data'] = {
+                        'nimi': data['name'], 'kartta': data['map'], 'hpr': data['hpr'], 'hs_percent': data['hs_percent'],
+                        'rounds': ennustetut_kierrokset, 'over': prob_over, 'under': prob_under,
+                        'raja': hs_raja, 'vastustaja': hs_vastustaja_tiimi
+                    }
+
+    # Näytetään tulokset muistista (Headshotit)
+    if 't3_data' in st.session_state:
+        d = st.session_state['t3_data']
+        odds_over = 1 / d['over'] if d['over'] > 0 else 0
+        odds_under = 1 / d['under'] if d['under'] > 0 else 0
+        
+        st.write("---")
+        st.subheader(f"🎯 Tulokset: {d['nimi']} @ {d['kartta'].capitalize()} vs {d['vastustaja']}")
+        st.caption(f"Historiallinen HS%: **{d['hs_percent']:.1f}%** | HPR: {d['hpr']:.3f} | Ennustettu kesto: **{d['rounds']:.1f} kierrosta**")
+        
+        res_col1, res_col2 = st.columns(2)
+        with res_col1:
+            st.metric(label=f"OVER {d['raja']} HS", value=f"{d['over']*100:.1f} %", delta=f"Kerroinraja: {odds_over:.2f}", delta_color="off")
+        with res_col2:
+            st.metric(label=f"UNDER {d['raja']} HS", value=f"{d['under']*100:.1f} %", delta=f"Kerroinraja: {odds_under:.2f}", delta_color="off")
+        
+        # --- UUSI: EV-LASKURI ---
+        st.write("📊 **EV-Laskuri (Etsi ylikertoimet)**")
+        ev_col1, ev_col2 = st.columns(2)
+        with ev_col1:
+            bookie_over_hs = st.number_input("Syötä bookkerin OVER-kerroin:", min_value=1.0, value=1.0, step=0.01, key="ev_over_t3")
+            if bookie_over_hs > 1.0:
+                ev_over = (d['over'] * bookie_over_hs - 1) * 100
+                color = "green" if ev_over > 0 else "red"
+                st.markdown(f"Odotusarvo: <strong style='color:{color}'>{ev_over:+.1f} %</strong>", unsafe_allow_html=True)
+                
+        with ev_col2:
+            bookie_under_hs = st.number_input("Syötä bookkerin UNDER-kerroin:", min_value=1.0, value=1.0, step=0.01, key="ev_under_t3")
+            if bookie_under_hs > 1.0:
+                ev_under = (d['under'] * bookie_under_hs - 1) * 100
+                color = "green" if ev_under > 0 else "red"
+                st.markdown(f"Odotusarvo: <strong style='color:{color}'>{ev_under:+.1f} %</strong>", unsafe_allow_html=True)
+        st.write("---")
+
+        with st.expander("➕ Kirjaa veto tästä kohteesta", expanded=True):
+            # Valintanappi lomakkeen ulkopuolelle
+            suunta_hs = st.radio("Vedon suunta:", ["OVER", "UNDER"], horizontal=True, key="suunta_t3")
+            
+            with st.form("bet_form_hs"):
+                b_desc = st.text_input("Vedon kuvaus", value=f"{d['nimi']} {suunta_hs} {d['raja']} HS, {d['kartta'].capitalize()}, {d['vastustaja']}")
+                
+                c1, c2 = st.columns(2)
+                b_stake = c1.number_input("Panos (€)", min_value=1.0, value=10.0, step=1.0)
+                
+                # Valitaan oletuskerroin automaattisesti suunnan mukaan
+                if suunta_hs == "OVER":
+                    default_odds_hs = bookie_over_hs if bookie_over_hs > 1.0 else round(odds_over, 2)
+                else:
+                    default_odds_hs = bookie_under_hs if bookie_under_hs > 1.0 else round(odds_under, 2)
                     
-                    st.write("---")
-                    st.subheader(f"🎯 Tulokset: {data['name']} @ {data['map'].capitalize()} vs {hs_vastustaja_tiimi}")
-                    st.caption(f"Historiallinen HS%: **{data['hs_percent']:.1f}%** | HPR: {data['hpr']:.3f} | Ennustettu kesto: **{ennustetut_kierrokset:.1f} kierrosta**")
-                    
-                    res_col1, res_col2 = st.columns(2)
-                    with res_col1:
-                        st.metric(label=f"OVER {hs_raja} HS", value=f"{prob_over*100:.1f} %", delta=f"Kerroinraja: {odds_over:.2f}", delta_color="off")
-                    with res_col2:
-                        st.metric(label=f"UNDER {hs_raja} HS", value=f"{prob_under*100:.1f} %", delta=f"Kerroinraja: {odds_under:.2f}", delta_color="off")
-                    
-                    # --- VEDON TALLENNUS (TAB 3) ---
-                    with st.expander("➕ Kirjaa veto tästä kohteesta", expanded=False):
-                        with st.form("bet_form_hs"):
-                            b_desc = st.text_input("Vedon kuvaus", value=f"{hs_pelaaja_nimi} OVER {hs_raja} HS (vs {hs_vastustaja_tiimi})")
-                            c1, c2 = st.columns(2)
-                            b_stake = c1.number_input("Panos (€)", min_value=1.0, value=10.0, step=1.0)
-                            b_odds = c2.number_input("Kerroin", min_value=1.01, value=round(odds_over, 2), step=0.01)
-                            if st.form_submit_button("Tallenna veto"):
-                                save_bet("Headshotit", b_desc, b_stake, b_odds)
-                                
-        elif hs_pelaajan_tiimi == hs_vastustaja_tiimi:
-            st.warning("Valitse kaksi eri joukkuetta!")
-        else:
-            st.warning("Täytä pelaaja ja molemmat joukkueet.")
+                b_odds = c2.number_input("Kerroin", min_value=1.01, value=float(default_odds_hs), step=0.01)
+                
+                if st.form_submit_button("Tallenna veto"):
+                    save_bet("Headshotit", b_desc, b_stake, b_odds)
+                    del st.session_state['t3_data']
+                    st.rerun()
 
 # ==========================================
 # VÄLILEHTI 4: VETOSEURANTA (TULOKSET)
