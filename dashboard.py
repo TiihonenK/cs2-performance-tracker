@@ -9,7 +9,6 @@ from players_props import (
     simulate_team_kills,
     sample_match_lengths,
     kills_probability_at_line,
-    generate_line_table,
 )
 
 def init_betting_db():
@@ -25,6 +24,12 @@ def init_betting_db():
         c.execute("ALTER TABLE bets ADD COLUMN tournament TEXT DEFAULT 'Yleinen'")
     except sqlite3.OperationalError:
         pass
+
+    # UUSI: kartta-sarake (Kartta 1-5), jotta voidaan merkitä millä kartalla veto on lyöty
+    try:
+        c.execute("ALTER TABLE bets ADD COLUMN map TEXT DEFAULT 'Kartta 1'")
+    except sqlite3.OperationalError:
+        pass
         
     # UUSI: Luodaan turnaustaulu
     c.execute('''CREATE TABLE IF NOT EXISTS tournaments
@@ -38,18 +43,53 @@ def init_betting_db():
     conn.commit()
     conn.close()
 
-# UUSI: save_bet ottaa nyt vastaan myös turnauksen nimen
-def save_bet(bet_type, description, stake, odds, tournament):
+# UUSI: save_bet ottaa nyt vastaan myös turnauksen nimen JA kartan
+def save_bet(bet_type, description, stake, odds, tournament, map_name):
     date_str = datetime.now().strftime("%Y-%m-%d %H:%M")
     conn = sqlite3.connect('my_bets.db')
     c = conn.cursor()
-    c.execute("INSERT INTO bets (date, type, description, stake, odds, status, tournament) VALUES (?, ?, ?, ?, ?, ?, ?)",
-              (date_str, bet_type, description, stake, odds, "Odottaa", tournament))
+    c.execute("INSERT INTO bets (date, type, description, stake, odds, status, tournament, map) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+              (date_str, bet_type, description, stake, odds, "Odottaa", tournament, map_name))
     conn.commit()
     conn.close()
-    st.success(f"✅ Veto tallennettu turnaukseen: {tournament}!")
+    st.success(f"✅ Veto tallennettu turnaukseen: {tournament} ({map_name})!")
 
 init_betting_db()
+
+def filter_bets(df, query):
+    """Suodattaa vetotaulukon hakusanalla (pelaaja/joukkue, turnaus, kartta, tyyppi, tila)."""
+    if not query:
+        return df
+    q = query.strip().lower()
+    search_cols = [c for c in ['description', 'tournament', 'map', 'type', 'status'] if c in df.columns]
+    mask = pd.Series(False, index=df.index)
+    for col in search_cols:
+        mask = mask | df[col].astype(str).str.lower().str.contains(q, na=False)
+    return df[mask]
+
+def show_bet_summary(df):
+    """Näyttää yhteenvedon (ROI %, vetojen määrä, tulos €, vireillä olevat) annetusta
+    vetojoukosta. ROI lasketaan vain RATKAISTUISTA vedoista (Voitto/Tappio), koska
+    odottavien vetojen panos ei vielä ole tuottanut mitään tulosta - sen mukaan
+    ottaminen nimittäjään vääristäisi lukua turhaan huonompaan suuntaan."""
+    total_bets = len(df)
+    settled = df[df['status'].isin(['Voitto', 'Tappio'])]
+    pending = df[df['status'] == 'Odottaa']
+    total_staked_settled = settled['stake'].sum()
+
+    profit_per_row = df.apply(
+        lambda x: (x['stake'] * (x['odds'] - 1)) if x['status'] == 'Voitto'
+        else (-x['stake'] if x['status'] == 'Tappio' else 0),
+        axis=1
+    )
+    total_profit = profit_per_row.sum()
+    roi = (total_profit / total_staked_settled * 100) if total_staked_settled > 0 else 0.0
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("ROI % (ratkaistuista)", f"{roi:+.1f} %")
+    c2.metric("Vetoja yhteensä", f"{total_bets}")
+    c3.metric("Tulos", f"{total_profit:+.2f} €")
+    c4.metric("Vireillä", f"{len(pending)}")
 
 st.set_page_config(page_title="CS2 Vetomalli", layout="wide", page_icon="🎯")
 st.title("CS2 Vedonlyöntimalli 2.1")
@@ -128,21 +168,9 @@ with tab1:
 
         st.caption(
             "'Line'-sarake on mallin oma automaattisesti generoitu keskikohta - "
-            "EI bookkerin tarjoamaa linjaa. Käytä alla olevaa kerroinrajataulukkoa "
-            "tai vetolomaketta nähdäksesi mallin arvion juuri sille linjalle, jonka "
-            "bookkeri oikeasti tarjoaa."
+            "EI bookkerin tarjoamaa linjaa. Käytä alla olevaa vetolomaketta nähdäksesi "
+            "mallin arvion juuri sille linjalle, jonka bookkeri oikeasti tarjoaa."
         )
-
-        # KORJAUS: kerroinrajataulukko usealle linjalle kerrallaan, sama periaate
-        # kuin betting_calculator.py:n joukkuevedoissa.
-        with st.expander("🔍 Kerroinrajataulukko yksittäiselle pelaajalle"):
-            table_player = st.selectbox(
-                "Valitse pelaaja:", list(sim_kills_lookup.keys()), key="line_table_player"
-            )
-            if table_player:
-                line_rows = generate_line_table(sim_kills_lookup[table_player])
-                st.dataframe(pd.DataFrame(line_rows), width='stretch', hide_index=True)
-                st.caption("Etsi bookkerilta kerroin joka on SUUREMPI kuin 'Kerroinraja' - silloin mallin mukaan vedossa on arvoa.")
 
         # VEDONLYÖNTILOMAKE
         st.write("---")
@@ -158,10 +186,11 @@ with tab1:
         # HUOM: tämä osio EI ole enää st.form:in sisällä, koska Streamlit-formit
         # eivät päivity reaaliaikaisesti - haluamme näyttää mallin arvion heti
         # kun käyttäjä vaihtaa pelaajaa/linjaa, ennen tallennusta.
-        c1, c2, c3 = st.columns(3)
+        c1, c2, c3, c4 = st.columns(4)
         valittu_pelaaja = c1.selectbox("Pelaaja:", player_names, key="bet_player")
         suunta = c2.radio("Suunta:", ["OVER", "UNDER"], horizontal=True, key="bet_direction")
         custom_line = c3.number_input("Raja (esim 14.5)", value=14.5, step=0.5, key="bet_line")
+        valittu_kartta = c4.selectbox("Kartta:", [f"Kartta {i}" for i in range(1, 6)], key="bet_map")
 
         # KORJAUS 1 (ydinkorjaus): mallin arvio lasketaan AINA juuri sille linjalle
         # jonka käyttäjä syöttää tähän - ei mallin omalle auto-generoidulle linjalle.
@@ -191,8 +220,8 @@ with tab1:
                 st.warning(f"⚠️ Bookkerin kerroin ({kerroin}) EI ylitä mallin kerroinrajaa ({model_odds:.2f}).")
 
         if st.button("Tallenna veto", type="primary"):
-            desc = f"{valittu_pelaaja} {suunta} {custom_line} ({res['t1']} vs {res['t2']})"
-            save_bet("Tapot", desc, panos, kerroin, valittu_turnaus)
+            desc = f"{valittu_pelaaja} {suunta} {custom_line} ({res['t1']} vs {res['t2']}, {valittu_kartta})"
+            save_bet("Tapot", desc, panos, kerroin, valittu_turnaus, valittu_kartta)
 
 # ==========================================
 # VÄLILEHTI 2: VETOSEURANTA JA TURNAUKSET
@@ -203,7 +232,19 @@ with tab2:
     conn = sqlite3.connect('my_bets.db')
     bets_df = pd.read_sql_query("SELECT * FROM bets ORDER BY id DESC", conn)
     tournaments_df = pd.read_sql_query("SELECT * FROM tournaments", conn)
-    
+
+    # UUSI: hakukenttä lyödyille vedoille. Pidetään omana hakutuloslistanaan eikä
+    # suodateta bets_df:ää globaalisti, koska alempien osioiden kassakäyrät
+    # pitää laskea koko historiasta - suodatettu osajoukko vääristäisi ne.
+    search_query = st.text_input(
+        "🔍 Hae vetoja (esim. pelaajan nimi, joukkue, kartta, turnaus)", key="bet_search"
+    )
+    if search_query:
+        search_results = filter_bets(bets_df, search_query)
+        st.caption(f"Löytyi {len(search_results)} vetoa haulla \"{search_query}\".")
+        st.dataframe(search_results, width='stretch', hide_index=True)
+        st.write("---")
+
     # Luodaan alivälilehdet navigoinnin helpottamiseksi
     subtab1, subtab2, subtab3 = st.tabs(["⚙️ Hallinta & Ratkaisu", "📊 Aktiiviset Turnaukset", "📚 Turnaushistoria & Kaikki"])
     
@@ -212,6 +253,12 @@ with tab2:
         st.subheader("Ratkaise odottavat vedot")
         if not bets_df.empty:
             pending_bets = bets_df[bets_df['status'] == 'Odottaa']
+            # UUSI: sama yläreunan hakukenttä suodattaa myös tämän listan, jotta
+            # yksittäisen vedon löytää ja ratkaisee helpommin isommastakin joukosta.
+            if search_query:
+                pending_bets = filter_bets(pending_bets, search_query)
+                if pending_bets.empty:
+                    st.caption(f"Ei odottavia vetoja haulla \"{search_query}\".")
             for index, row in pending_bets.iterrows():
                 with st.form(f"resolve_{row['id']}"):
                     st.write(f"**[{row['tournament']}]** {row['date'][:10]} | {row['description']} (Panos: {row['stake']}€ @ {row['odds']})")
@@ -305,14 +352,16 @@ with tab2:
         if active_list:
             view_t = st.selectbox("Näytä data turnaukselle:", active_list, key="view_active")
             t_bets = bets_df[bets_df['tournament'] == view_t].copy()
-            st.write(f"Vetoja yhteensä: **{len(t_bets)}**")
-            
+
             if not t_bets.empty:
                 # Laske kassan kehitys kronologisessa järjestyksessä
                 t_bets = t_bets.sort_values('id')
                 t_bets['Tuotto'] = t_bets.apply(lambda x: (x['stake'] * (x['odds'] - 1)) if x['status'] == 'Voitto' else (-x['stake'] if x['status'] == 'Tappio' else 0), axis=1)
                 t_bets['Kassa (€)'] = t_bets['Tuotto'].cumsum()
-                
+
+                # UUSI: ROI %, vetojen määrä ja tulos euroina graafin yläpuolella
+                show_bet_summary(t_bets)
+
                 # Piirretään graafi kassan kehityksestä
                 st.line_chart(t_bets['Kassa (€)'].reset_index(drop=True))
                 
@@ -332,7 +381,10 @@ with tab2:
                 hist_bets = hist_bets.sort_values('id')
                 hist_bets['Tuotto'] = hist_bets.apply(lambda x: (x['stake'] * (x['odds'] - 1)) if x['status'] == 'Voitto' else (-x['stake'] if x['status'] == 'Tappio' else 0), axis=1)
                 hist_bets['Kassa (€)'] = hist_bets['Tuotto'].cumsum()
-                
+
+                # UUSI: ROI %, vetojen määrä ja tulos euroina graafin yläpuolella
+                show_bet_summary(hist_bets)
+
                 st.line_chart(hist_bets['Kassa (€)'].reset_index(drop=True))
                 st.dataframe(hist_bets.drop(columns=['Tuotto', 'Kassa (€)']), width='stretch', hide_index=True)
         else:
@@ -344,7 +396,10 @@ with tab2:
             all_bets = bets_df.copy().sort_values('id')
             all_bets['Tuotto'] = all_bets.apply(lambda x: (x['stake'] * (x['odds'] - 1)) if x['status'] == 'Voitto' else (-x['stake'] if x['status'] == 'Tappio' else 0), axis=1)
             all_bets['Kassa (€)'] = all_bets['Tuotto'].cumsum()
-            
+
+            # UUSI: ROI %, vetojen määrä ja tulos euroina graafin yläpuolella
+            show_bet_summary(all_bets)
+
             st.line_chart(all_bets['Kassa (€)'].reset_index(drop=True))
             st.dataframe(all_bets.drop(columns=['Tuotto', 'Kassa (€)']), width='stretch', hide_index=True)
 
