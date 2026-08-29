@@ -1,0 +1,11 @@
+# Palvelinasetukset - näiden ansiosta "streamlit run dashboard.py" CMD:ssä
+# riittää sellaisenaan, ei tarvita pitkää komentoriviliputusta Dockerfilessä.
+[server]
+address = "0.0.0.0"
+port = 8501
+headless = true
+enableCORS = false
+enableXsrfProtection = true
+
+[browser]
+gatherUsageStats = false

@@ -1,0 +1,14 @@
+[Unit]
+Description=Ajaa HLTV-skraperin joka aamu klo 06:00
+
+[Timer]
+OnCalendar=*-*-* 06:00:00
+# Jos Pi oli sammuksissa klo 06 (esim. sähkökatko), ajo suoritetaan heti kun
+# Pi käynnistyy seuraavan kerran - ei jää kokonaan väliin.
+Persistent=true
+# Satunnainen 0-10 min viive, ettei ajo osu täsmälleen samaan sekuntiin joka
+# päivä (kohteliaisuus HLTV:tä kohtaan, pienentää kiinnijäämisen todennäköisyyttä).
+RandomizedDelaySec=600
+
+[Install]
+WantedBy=timers.target

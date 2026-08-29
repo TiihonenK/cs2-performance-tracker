@@ -1,0 +1,40 @@
+services:
+  # --- Home Assistant (palautetaan HAOS-varmuuskopiosta, ks. docs/01) ---
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:stable
+    container_name: homeassistant
+    volumes:
+      - ./homeassistant:/config
+      - /etc/localtime:/etc/localtime:ro
+    restart: unless-stopped
+    privileged: true      # HA:n oma suositus - tarvitaan mm. USB-laitteille (Zigbee/Z-Wave-tikut)
+    network_mode: host    # HA:n oma suositus - mDNS-löytäminen (esim. Chromecastit) ei toimi ilman tätä
+
+  # --- Vedonlyöntidashboard (Streamlit) ---
+  dashboard:
+    build:
+      context: .
+      dockerfile: dashboard/Dockerfile
+    container_name: cs-dashboard
+    volumes:
+      # Yksi jaettu kansio kannoille - sekä dashboard että scraper kirjoittavat/lukevat
+      # SAMOJA tiedostoja tämän kautta. entrypoint.sh linkittää ne oikeille nimille.
+      - ./data:/app/db_data
+    ports:
+      - "8501:8501"
+    restart: unless-stopped
+
+  # --- HLTV-skraperi ---
+  # HUOM: EI restart-käytäntöä eikä käynnisty "docker compose up":lla, koska se on
+  # tarkoitettu ajettavaksi KERRAN PÄIVÄSSÄ systemd-ajastimen kautta (ks. systemd/),
+  # ei taustalla pyörivänä palveluna. profiles-rivi estää sen käynnistymisen vahingossa
+  # "docker compose up -d" -komennolla; "docker compose run --rm scraper" toimii silti,
+  # koska se nimeää palvelun eksplisiittisesti.
+  scraper:
+    build:
+      context: .
+      dockerfile: scraper/Dockerfile
+    container_name: cs-scraper
+    volumes:
+      - ./data:/app/db_data
+    profiles: ["scraper"]
