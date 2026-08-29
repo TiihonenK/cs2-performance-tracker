@@ -1,11 +1,23 @@
 import undetected_chromedriver as uc
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service as ChromeService
+from selenium.webdriver.chrome.options import Options as ChromeOptions
 from selenium.common.exceptions import WebDriverException, TimeoutException, SessionNotCreatedException
 from bs4 import BeautifulSoup
 import sqlite3
 import time
 import random
 import re
+import os
 from datetime import datetime, timedelta
+
+# Docker/ARM64-polku (Raspberry Pi): kun nämä on asetettu (ks. scraper/Dockerfile),
+# käytetään Debianin omia chromium+chromium-driver-paketteja undetected_chromedriverin
+# oman automaattilataajan sijaan - se olettaa aina x86-64:n eikä osaa hakea
+# ARM64-Chromea. Windows-koneella nämä ympäristömuuttujat eivät ole asetettuja,
+# joten käytös pysyy täysin ennallaan siellä.
+CHROME_BIN = os.environ.get('CHROME_BIN')
+CHROMEDRIVER_BIN = os.environ.get('CHROMEDRIVER_BIN')
 
 BASE_URL = "https://www.hltv.org"
 
@@ -112,7 +124,42 @@ def match_already_scraped(conn, match_id):
 
 def _build_driver(version_main):
     """Sisäinen apufunktio: rakentaa selaininstanssin annetulla versionumerolla
-    (None = automaattinen tunnistus)."""
+    (None = automaattinen tunnistus). Docker/ARM64-polulla version_main ei ole
+    käytössä - ajuri on kiinteä Debian-paketti eikä sitä ladata automaattisesti."""
+
+    if CHROME_BIN and CHROMEDRIVER_BIN:
+        # Docker/ARM64-polku (Raspberry Pi). HUOM: käytetään TAVALLISTA
+        # Seleniumin omaa webdriver.Chrome():a, EI undetected_chromedriveria.
+        # uc.Chrome() yritti "patchata" annetun ajurin kopioimalla sen omaan
+        # välimuistiinsa (~/.local/share/undetected_chromedriver/) poistaakseen
+        # automaatiotunnisteita binääristä - tulos oli rikki ARM64:llä:
+        # "OSError: [Errno 8] Exec format error" ajoa yritettäessä (testattu
+        # oikealla Pi 5:llä, ks. keskusteluhistoria). Tavallinen Selenium
+        # käyttää annettua /usr/bin/chromedriver-ajuria suoraan sellaisenaan
+        # ilman patch-vaihetta, mikä toimii luotettavasti.
+        # --disable-blink-features=AutomationControlled korvaa osan uc:n
+        # piilotuksesta ilman että ajuria tarvitsee patchata.
+        # Headless-tilasta: alun perin yritettiin "headed" Chromea Xvfb-
+        # virtuaalinäytön kautta, mutta se jäi pysyvästi jumiin Pi 5:llä
+        # (testattu käsin suoraan Chromiumilla - ei koskaan palauttanut
+        # mitään, ei edes virhettä). --headless=new toimii luotettavasti, ja
+        # on nykyaikaisessa Chromiumissa jo huomattavasti vaikeampi tunnistaa
+        # botiksi kuin vanha --headless-lippu, joten Xvfb ei ole enää tarpeen.
+        options = ChromeOptions()
+        options.binary_location = CHROME_BIN
+        options.add_argument('--headless=new')
+        options.add_argument('--no-sandbox')
+        options.add_argument('--disable-dev-shm-usage')
+        options.add_argument('--disable-gpu')
+        options.add_argument('--window-size=1920,1080')
+        options.add_argument('--disable-blink-features=AutomationControlled')
+        service = ChromeService(executable_path=CHROMEDRIVER_BIN)
+        driver = webdriver.Chrome(service=service, options=options)
+        driver.set_page_load_timeout(60)
+        return driver
+
+    # Windows/paikallinen polku (ennallaan): undetected_chromedriver, joka
+    # tunnistaa/lataa Chromelle sopivan ajurin automaattisesti.
     options = uc.ChromeOptions()
     kwargs = {'options': options, 'use_subprocess': True}
     if version_main is not None:
