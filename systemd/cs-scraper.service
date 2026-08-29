@@ -5,9 +5,7 @@ Requires=docker.service
 
 [Service]
 Type=oneshot
-# HUOM: vaihda tämä polku siihen kansioon johon kloonasit/kopioit Web_scrape-repon
-# Pi:lle, esim. /home/pi/cs2-performance-tracker
-WorkingDirectory=/home/pi/cs2-performance-tracker
+WorkingDirectory=/home/kim/cs2-performance-tracker
 ExecStart=/usr/bin/docker compose run --rm scraper
 # Estää yksittäisen jumiutuneen ajon jäämästä ikuisesti roikkumaan (esim. jos
 # Cloudflare-tarkistus jää silmukkaan) - tappaa ajon 30 min jälkeen.
