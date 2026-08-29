@@ -30,10 +30,10 @@ WORKDIR /app
 COPY scraper/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY webScrape.py ./
+COPY WebScrape.py ./
 
 COPY scraper/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 ENTRYPOINT ["/entrypoint.sh"]
-CMD ["python", "webScrape.py"]
+CMD ["python", "WebScrape.py"]
