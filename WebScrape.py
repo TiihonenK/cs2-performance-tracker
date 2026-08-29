@@ -42,7 +42,7 @@ SAFETY_BUFFER_DAYS = 2
 # Se maksaa vain yhden ylimääräisen sivulatauksen per joukkue, koska jo
 # tietokannassa olevat kartat ohitetaan joka tapauksessa.
 # Aseta False, kun 240 päivän historia on kerran haettu ja haluat taas nopeat ajot.
-FORCE_FULL_LOOKBACK = True
+FORCE_FULL_LOOKBACK = False
 
 # Chromen pääversio, jota ajuri vastaa. None = undetected_chromedriver tunnistaa
 # koneelle asennetun Chromen version itse ja lataa siihen sopivan ajurin.
@@ -167,13 +167,38 @@ def _build_driver(version_main):
         )
         service = ChromeService(executable_path=CHROMEDRIVER_BIN)
         driver = webdriver.Chrome(service=service, options=options)
-        # Piilottaa navigator.webdriver-lipun JOKAISELTA sivulta ennen kuin
-        # sivun oma JS ehtii ajaa - tämä on yksi yleisimmistä tavoista joilla
-        # Cloudflare (ja moni muu bottitunnistus) erottaa Seleniumin oikeasta
-        # selaimesta, eikä --disable-blink-features=AutomationControlled yksin
-        # aina riitä poistamaan sitä kokonaan.
+        # KATTAVAMPI stealth-skripti: pelkkä navigator.webdriver-korjaus ei
+        # riittänyt (testattu oikealla Pi:llä - /stats/-sivut jäivät yhä
+        # jumiin Cloudflareen). Nämä ovat kaikki tunnettuja, hyvin dokumentoituja
+        # tapoja joilla headless Chrome erottuu oikeasta selaimesta - samat joita
+        # esim. puppeteer-extra-plugin-stealth patchaa. Ajetaan JOKAISELLE
+        # sivulle ennen sen omaa JS:ää (Page.addScriptToEvaluateOnNewDocument):
+        #   - navigator.webdriver: automaatiolippu
+        #   - window.chrome: headless-Chromesta usein kokonaan puuttuva objekti
+        #   - navigator.plugins/mimeTypes: headless raportoi nämä tyhjinä
+        #   - navigator.permissions.query: headless käyttäytyy notifications-
+        #     kyselyssä eri tavalla kuin oikea selain
+        #   - WebGL vendor/renderer: --disable-gpu:n myötä nämä paljastavat
+        #     "Google SwiftShader":n, joka on klassinen headless-tunniste
         driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
-            'source': "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+            'source': """
+                Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+                window.chrome = window.chrome || { runtime: {} };
+                Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
+                Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
+                const originalQuery = window.navigator.permissions.query;
+                window.navigator.permissions.query = (parameters) => (
+                    parameters.name === 'notifications'
+                        ? Promise.resolve({ state: Notification.permission })
+                        : originalQuery(parameters)
+                );
+                const getParameter = WebGLRenderingContext.prototype.getParameter;
+                WebGLRenderingContext.prototype.getParameter = function(parameter) {
+                    if (parameter === 37445) { return 'Intel Inc.'; }
+                    if (parameter === 37446) { return 'Intel Iris OpenGL Engine'; }
+                    return getParameter.apply(this, [parameter]);
+                };
+            """
         })
         driver.set_page_load_timeout(60)
         return driver
