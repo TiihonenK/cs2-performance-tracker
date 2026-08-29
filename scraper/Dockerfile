@@ -9,13 +9,12 @@ FROM python:3.11-slim
 # versiosynkassa apt-päivitysten kautta. EI Google Chrome for Testingiä eikä
 # undetected_chromedriverin automaattilatausta - ks. perustelu webScrape.py:n
 # _build_driver()-funktion kommenteista.
-# xvfb: virtuaalinäyttö, jotta Chromium ajetaan "headed"-tilassa ilman
-# --headless-lippua (vähemmän havaittavissa Cloudflaren tarkistukselle).
+# HUOM: xvfb/xauth EIVÄT ole enää mukana - Xvfb + "headed" Chrome jäi
+# pysyvästi jumiin Pi 5:llä (testattu käsin), joten webScrape.py käyttää
+# nyt suoraan --headless=new -tilaa, joka toimii luotettavasti.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         chromium \
         chromium-driver \
-        xvfb \
-        xauth \
         ca-certificates \
         fonts-liberation \
     && rm -rf /var/lib/apt/lists/*

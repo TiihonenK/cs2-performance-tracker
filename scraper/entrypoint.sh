@@ -1,11 +1,11 @@
 #!/bin/sh
-# Sama linkitysperiaate kuin dashboard/entrypoint.sh - jaettu /app/db_data-volume
-# linkitetään koodin odottamaan tiedostonimeen ilman koodimuutoksia.
+# HUOM: Xvfb-kaarinta poistettu - webScrape.py kaynnistaa Chromen suoraan
+# --headless=new -tilassa Docker/ARM64-polulla (ks. webScrape.py:n
+# _build_driver()-funktion kommentit), koska Xvfb+"headed" Chrome jai
+# pysyvasti jumiin Pi 5:lla.
 set -e
 
 mkdir -p /app/db_data
 ln -sf /app/db_data/hltv_data.db /app/hltv_data.db
 
-# xvfb-run käynnistää virtuaalinäytön ja ajaa komennon sen sisällä - Chromium
-# näkee "oikean" ruudun eikä tarvitse --headless-lippua (ks. Dockerfile-kommentit).
-exec xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" "$@"
+exec "$@"
