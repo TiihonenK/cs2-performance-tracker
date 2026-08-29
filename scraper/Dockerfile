@@ -5,31 +5,20 @@
 # jota käytettäisiin x86-64:llekin, Debianin pakettivarasto hoitaa loput.
 FROM python:3.11-slim
 
-# chromium + chromium-driver: Debianin OMAT ARM64-buildit, aina keskenään
-# versiosynkassa apt-päivitysten kautta. EI Google Chrome for Testingiä eikä
-# undetected_chromedriverin automaattilatausta - ks. perustelu webScrape.py:n
-# _build_driver()-funktion kommenteista.
-# HUOM: xvfb/xauth EIVÄT ole enää mukana - Xvfb + "headed" Chrome jäi
-# pysyvästi jumiin Pi 5:llä (testattu käsin), joten webScrape.py käyttää
-# nyt suoraan --headless=new -tilaa, joka toimii luotettavasti.
+# HUOM: chromium/chromium-driver EIVÄT ole enää mukana tässä imagessa.
+# Kokeilimme pitkään ajaa HLTV:n scrapea suoraan Seleniumilla/chromedriverilla
+# containerissa (Xvfb, --headless=new, chromedriverin cdc_-tunnistemerkin
+# manuaalinen patchaus, kattava navigator/WebGL-stealth-skripti ym. - ks.
+# WebScrape.py:n git-historia) - mikään näistä ei riittänyt läpäisemään
+# HLTV:n /stats/-sivujen Cloudflare Managed Challenge / Turnstile-suojausta,
+# vaikka /ranking/teams meni aina läpi ongelmitta. Sen sijaan HLTV-sivut
+# haetaan nyt FlareSolverr-sivukontin kautta (ks. docker-compose.yml) - se
+# ajaa oman, aktiivisesti ylläpidetyn selainautomaationsa erillisessä
+# kontissa, joten tämä image ei tarvitse omaa selainta lainkaan.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        chromium \
-        chromium-driver \
         ca-certificates \
-        fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 
-# Patchataan chromedriver-binaari poistamaan Selenium/ChromeDriverin sivuille
-# injektoima window.cdc_... -tunnistemerkki, jota mm. Cloudflaren tiukemmat
-# suojaustasot kayttavat automatisoidun selaimen tunnistamiseen (havaittiin
-# kasin testaten - HLTV:n yleisempi sivu paasi lapi, mutta /stats/-polku ei).
-# undetected_chromedriver tekisi taman automaattisesti, mutta sen oma
-# lataus/patch-logiikka ei toimi ARM64:lla - ks. patch_chromedriver.py.
-COPY scraper/patch_chromedriver.py /tmp/patch_chromedriver.py
-RUN python3 /tmp/patch_chromedriver.py && rm /tmp/patch_chromedriver.py
-
-ENV CHROME_BIN=/usr/bin/chromium
-ENV CHROMEDRIVER_BIN=/usr/bin/chromedriver
 # Estää Streamlit/pandas-tyylisten kirjastojen "onko uudempi versio" -verkkokutsuja
 # ja pitää Python-tulosteen reaaliaikaisena journalctl-lokeissa (ks. systemd/).
 ENV PYTHONUNBUFFERED=1

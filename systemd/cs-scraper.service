@@ -7,6 +7,11 @@ Requires=docker.service
 Type=oneshot
 WorkingDirectory=/home/kim/cs2-performance-tracker
 ExecStart=/usr/bin/docker compose run --rm scraper
+# FlareSolverr (ks. docker-compose.yml) käynnistyy scraperin mukana
+# (depends_on), mutta "--rm" ei sammuta sitä - pysäytetään se erikseen
+# ajon jälkeen ettei se jää turhaan syömään RAM:ia loppupäiväksi. Etumerkin
+# "-" ansiosta tämän epäonnistuminen ei merkitse koko palvelua epäonnistuneeksi.
+ExecStopPost=-/usr/bin/docker compose stop flaresolverr
 # Estää yksittäisen jumiutuneen ajon jäämästä ikuisesti roikkumaan (esim. jos
 # Cloudflare-tarkistus jää silmukkaan) - tappaa ajon 30 min jälkeen.
 TimeoutStartSec=1800

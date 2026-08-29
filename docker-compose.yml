@@ -24,6 +24,28 @@ services:
       - "8501:8501"
     restart: unless-stopped
 
+  # --- FlareSolverr: ratkaisee HLTV:n Cloudflare-suojauksen (Managed Challenge /
+  # Turnstile) scraperin puolesta. Aktiivisesti ylläpidetty, tarkoitettu juuri
+  # tähän käyttötarkoitukseen - paljon kestävämpi ratkaisu kuin käsin patchattu
+  # Selenium/chromedriver, jota kokeiltiin ensin eikä saatu läpäisemään HLTV:n
+  # /stats/-sivujen suojausta (ks. WebScrape.py:n git-historia). Sama
+  # profiles-rivi kuin scraperilla, koska tätä ei tarvita muulloin kuin
+  # scraperin ajon aikana - ei jää turhaan syömään RAM:ia Pi:llä loppupäiväksi
+  # (systemd-palvelu pysäyttää tämän ajon jälkeen, ks. systemd/cs-scraper.service).
+  # Portti 8191 julkaistu vain paikallista vianmääritystä varten
+  # (esim. curl http://localhost:8191/ Pi:llä) - scraper puhuu sille joka
+  # tapauksessa suoraan Dockerin sisäisen verkon kautta.
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    container_name: flaresolverr
+    environment:
+      - LOG_LEVEL=info
+      - TZ=Europe/Helsinki
+    ports:
+      - "8191:8191"
+    profiles: ["scraper"]
+    restart: "no"
+
   # --- HLTV-skraperi ---
   # HUOM: EI restart-käytäntöä eikä käynnisty "docker compose up":lla, koska se on
   # tarkoitettu ajettavaksi KERRAN PÄIVÄSSÄ systemd-ajastimen kautta (ks. systemd/),
@@ -37,11 +59,8 @@ services:
     container_name: cs-scraper
     volumes:
       - ./data:/app/db_data
+    environment:
+      - FLARESOLVERR_URL=http://flaresolverr:8191
+    depends_on:
+      - flaresolverr
     profiles: ["scraper"]
-    # VIANMÄÄRITYS (ARM64/Pi): Dockerin oletus-seccomp-suodatin näytti estävän
-    # Chromiumin sisäisen prosessienhallinnan (jäi jumiin ilman virhettä sivua
-    # ladatessa). "unconfined" poistaa suodattimen kokonaan tältä kontilta -
-    # turvallista tässä, koska scraper ei käsittele käyttäjän syötettä eikä ole
-    # verkosta suoraan saavutettavissa (ei porttimäärittelyä).
-    security_opt:
-      - seccomp:unconfined

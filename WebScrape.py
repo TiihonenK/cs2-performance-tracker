@@ -4,6 +4,7 @@ from selenium.webdriver.chrome.service import Service as ChromeService
 from selenium.webdriver.chrome.options import Options as ChromeOptions
 from selenium.common.exceptions import WebDriverException, TimeoutException, SessionNotCreatedException
 from bs4 import BeautifulSoup
+import requests
 import sqlite3
 import time
 import random
@@ -16,8 +17,17 @@ from datetime import datetime, timedelta
 # oman automaattilataajan sijaan - se olettaa aina x86-64:n eikä osaa hakea
 # ARM64-Chromea. Windows-koneella nämä ympäristömuuttujat eivät ole asetettuja,
 # joten käytös pysyy täysin ennallaan siellä.
+# HUOM: tätä polkua EI enää käytetä Dockerissa (ks. FLARESOLVERR_URL alla) -
+# jätetty koodiin varapolkuna, jos FlareSolverr joskus poistetaan käytöstä.
 CHROME_BIN = os.environ.get('CHROME_BIN')
 CHROMEDRIVER_BIN = os.environ.get('CHROMEDRIVER_BIN')
+
+# Docker/ARM64-polku (Raspberry Pi): FlareSolverr-sivukontin osoite (ks.
+# docker-compose.yml). Kun tämä on asetettu, HLTV-sivut haetaan FlareSolverrin
+# kautta suoran Selenium-ajon sijaan - ks. FlareSolverrFetcher-luokan kommentit
+# alempana siitä miksi tähän päädyttiin (käsin patchattu Selenium/chromedriver
+# ei läpäissyt HLTV:n /stats/-sivujen Cloudflare Managed Challenge -suojausta).
+FLARESOLVERR_URL = os.environ.get('FLARESOLVERR_URL')
 
 BASE_URL = "https://www.hltv.org"
 
@@ -124,27 +134,21 @@ def match_already_scraped(conn, match_id):
 
 def _build_driver(version_main):
     """Sisäinen apufunktio: rakentaa selaininstanssin annetulla versionumerolla
-    (None = automaattinen tunnistus). Docker/ARM64-polulla version_main ei ole
-    käytössä - ajuri on kiinteä Debian-paketti eikä sitä ladata automaattisesti."""
+    (None = automaattinen tunnistus). HUOM: tätä käytetään enää vain Windows/
+    paikallisella polulla ja CHROME_BIN-varapolulla - Docker/ARM64:llä ajo
+    kulkee nykyään FlareSolverrFetcherin kautta (ks. create_fetcher())."""
 
     if CHROME_BIN and CHROMEDRIVER_BIN:
-        # Docker/ARM64-polku (Raspberry Pi). HUOM: käytetään TAVALLISTA
-        # Seleniumin omaa webdriver.Chrome():a, EI undetected_chromedriveria.
-        # uc.Chrome() yritti "patchata" annetun ajurin kopioimalla sen omaan
-        # välimuistiinsa (~/.local/share/undetected_chromedriver/) poistaakseen
-        # automaatiotunnisteita binääristä - tulos oli rikki ARM64:llä:
-        # "OSError: [Errno 8] Exec format error" ajoa yritettäessä (testattu
-        # oikealla Pi 5:llä, ks. keskusteluhistoria). Tavallinen Selenium
-        # käyttää annettua /usr/bin/chromedriver-ajuria suoraan sellaisenaan
-        # ilman patch-vaihetta, mikä toimii luotettavasti.
-        # --disable-blink-features=AutomationControlled korvaa osan uc:n
-        # piilotuksesta ilman että ajuria tarvitsee patchata.
-        # Headless-tilasta: alun perin yritettiin "headed" Chromea Xvfb-
-        # virtuaalinäytön kautta, mutta se jäi pysyvästi jumiin Pi 5:llä
-        # (testattu käsin suoraan Chromiumilla - ei koskaan palauttanut
-        # mitään, ei edes virhettä). --headless=new toimii luotettavasti, ja
-        # on nykyaikaisessa Chromiumissa jo huomattavasti vaikeampi tunnistaa
-        # botiksi kuin vanha --headless-lippu, joten Xvfb ei ole enää tarpeen.
+        # Vara/legacy-polku: tavallinen Seleniumin webdriver.Chrome(), EI
+        # undetected_chromedriveria (uc.Chrome() ei toiminut ARM64:llä -
+        # "OSError: [Errno 8] Exec format error", ks. git-historia). Tämä
+        # polku EI enää ole käytössä normaalisti - scraper/Dockerfile ei aseta
+        # CHROME_BIN/CHROMEDRIVER_BIN-muuttujia eikä asenna chromiumia, koska
+        # tämä polku ei läpäissyt HLTV:n /stats/-sivujen Cloudflare-suojausta
+        # edes kattavalla stealth-skriptillä testattuna. Jätetty koodiin siltä
+        # varalta että FlareSolverr joskus poistetaan käytöstä ja tähän on
+        # tarve palata (esim. asentamalla chromium+chromium-driver takaisin
+        # Dockerfileen ja asettamalla nämä ympäristömuuttujat).
         options = ChromeOptions()
         options.binary_location = CHROME_BIN
         options.add_argument('--headless=new')
@@ -153,12 +157,6 @@ def _build_driver(version_main):
         options.add_argument('--disable-gpu')
         options.add_argument('--window-size=1920,1080')
         options.add_argument('--disable-blink-features=AutomationControlled')
-        # Lisää "stealth"-korjauksia, koska menetimme undetected_chromedriverin
-        # automaattisen piilotuksen kun jouduimme siirtymään pois siitä (ks.
-        # yllä oleva kommentti). Cloudflare tunnisti ensimmäisessä oikealla
-        # Pi:llä ajetussa testissä paljaan Seleniumin botiksi eikä päästänyt
-        # HLTV:n /ranking/teams-sivulle asti - nämä ovat yleisimmät ja
-        # tehokkaimmat yksittäiset tunnistemerkit joita Cloudflare katsoo.
         options.add_experimental_option('excludeSwitches', ['enable-automation'])
         options.add_experimental_option('useAutomationExtension', False)
         options.add_argument(
@@ -167,22 +165,9 @@ def _build_driver(version_main):
         )
         service = ChromeService(executable_path=CHROMEDRIVER_BIN)
         driver = webdriver.Chrome(service=service, options=options)
-        # KATTAVAMPI stealth-skripti: pelkkä navigator.webdriver-korjaus ei
-        # riittänyt (testattu oikealla Pi:llä - /stats/-sivut jäivät yhä
-        # jumiin Cloudflareen). Nämä ovat kaikki tunnettuja, hyvin dokumentoituja
-        # tapoja joilla headless Chrome erottuu oikeasta selaimesta - samat joita
-        # esim. puppeteer-extra-plugin-stealth patchaa. Ajetaan JOKAISELLE
-        # sivulle ennen sen omaa JS:ää (Page.addScriptToEvaluateOnNewDocument):
-        #   - navigator.webdriver: automaatiolippu
-        #   - window.chrome: headless-Chromesta usein kokonaan puuttuva objekti
-        #   - navigator.plugins/mimeTypes: headless raportoi nämä tyhjinä
-        #   - navigator.permissions.query: headless käyttäytyy notifications-
-        #     kyselyssä eri tavalla kuin oikea selain
-        #   - WebGL vendor/renderer: --disable-gpu:n myötä nämä paljastavat
-        #     "Google SwiftShader":n, joka on klassinen headless-tunniste
         driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
             'source': """
-                Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+                Object.defineProperty(navigator, 'webdriver', {get: () => false});
                 window.chrome = window.chrome || { runtime: {} };
                 Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
                 Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
@@ -237,7 +222,8 @@ def create_driver():
         return _build_driver(detected)
 
 def check_cloudflare(driver):
-    """Tarkistaa, onko selain jumissa Cloudflaren tarkistusruudussa ja yrittää odottaa."""
+    """Tarkistaa, onko selain jumissa Cloudflaren tarkistusruudussa ja yrittää odottaa.
+    Käytössä vain SeleniumFetcherin (Windows/legacy-polku) kautta."""
     for _ in range(8):
         title = driver.title.lower()
         if "moment" in title or "cloudflare" in title or "just a moment" in title:
@@ -247,16 +233,145 @@ def check_cloudflare(driver):
             return True
     return False
 
-def get_top_teams(driver, conn, top_n=TOP_N_TEAMS):
+
+class SeleniumFetcher:
+    """Windows/paikallinen polku: kääri olemassa olevan Selenium-ajurin samaan
+    .get(url) -> html -rajapintaan kuin FlareSolverrFetcher, jotta hakulogiikka
+    (get_top_teams, get_team_match_links, get_match_stats) on identtinen
+    riippumatta siitä kumpaa backendia käytetään."""
+
+    def __init__(self, driver):
+        self.driver = driver
+
+    def get(self, url, wait_seconds=6):
+        self.driver.get(url)
+        time.sleep(wait_seconds)
+        check_cloudflare(self.driver)
+        return self.driver.page_source
+
+    def recreate(self):
+        """Käynnistää ajurin uudelleen kesken ajon jumiutumisen/kaatumisen jälkeen."""
+        try:
+            self.driver.quit()
+        except Exception:
+            pass
+        self.driver = create_driver()
+
+    def quit(self):
+        try:
+            self.driver.quit()
+        except Exception:
+            pass
+
+
+class FlareSolverrFetcher:
+    """Docker/ARM64-polku (Raspberry Pi). Käsin patchattu Selenium/chromedriver
+    (navigator.webdriver-piilotus, WebGL-vendor/renderer-spoofaus, chromedriverin
+    cdc_-tunnistemerkin poisto binääristä ym. - ks. tämän tiedoston git-historia)
+    ei riittänyt läpäisemään HLTV:n /stats/-sivujen Cloudflare Managed Challenge /
+    Turnstile-tason suojausta, vaikka /ranking/teams-sivu meni läpi ongelmitta.
+    FlareSolverr (ks. docker-compose.yml, https://github.com/FlareSolverr/FlareSolverr)
+    on nimenomaan tähän tarkoitukseen rakennettu, aktiivisesti ylläpidetty
+    sivukontti - sen sisäistä selainautomaatiota ei enää yritetä patchailla itse
+    käsin, vaan luotetaan projektiin joka seuraa Cloudflaren muutoksia jatkuvasti.
+
+    Toimintaperiaate nopeuden vuoksi: ensimmäinen pyyntö (tai kun aiempi eväste
+    ei enää kelpaa) ratkaistaan FlareSolverrin kautta, joka palauttaa mm.
+    cf_clearance-evästeen ja sopivan User-Agentin. Niitä käytetään sen jälkeen
+    tavallisissa nopeissa requests-kutsuissa suoraan HLTV:lle ilman että joka
+    ikistä sivua tarvitsee ratkoa erikseen selaimella - vain jos Cloudflare
+    haastaa uudelleen (esim. eväste vanhentunut), ratkaistaan uudelleen
+    FlareSolverrin kautta."""
+
+    def __init__(self, base_url):
+        self.base_url = base_url.rstrip('/')
+        self.session = requests.Session()
+        self._cleared = False
+
+    @staticmethod
+    def _looks_challenged(text):
+        lowered = text[:2000].lower()
+        return (
+            'just a moment' in lowered
+            or 'cf-chl' in lowered
+            or 'challenges.cloudflare.com' in lowered
+        )
+
+    def _solve(self, url, timeout=60):
+        print(f"     [FlareSolverr] Ratkaistaan Cloudflare-haaste: {url}")
+        # FlareSolverr-kontin oma Chromium-käynnistys voi kestää kymmeniä
+        # sekunteja Pi:llä varsinkin ensimmäisellä kerralla - yritetään
+        # uudelleen jos yhteys ei vielä ota vastaan sen sijaan että kaadutaan
+        # heti (depends_on takaa vain että kontti on käynnistynyt, ei että sen
+        # sisäinen Flask-palvelin+selain on jo valmis).
+        last_error = None
+        for attempt in range(12):
+            try:
+                resp = requests.post(
+                    f"{self.base_url}/v1",
+                    json={"cmd": "request.get", "url": url, "maxTimeout": timeout * 1000},
+                    timeout=timeout + 15,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                if data.get('status') != 'ok':
+                    raise RuntimeError(f"FlareSolverr epäonnistui: {data.get('message')}")
+                solution = data['solution']
+                for cookie in solution.get('cookies', []):
+                    self.session.cookies.set(
+                        cookie.get('name'), cookie.get('value'),
+                        domain=cookie.get('domain', ''), path=cookie.get('path', '/'),
+                    )
+                user_agent = solution.get('userAgent')
+                if user_agent:
+                    self.session.headers['User-Agent'] = user_agent
+                self._cleared = True
+                return solution.get('response', '')
+            except requests.exceptions.ConnectionError as e:
+                last_error = e
+                print(f"     [i] FlareSolverr ei vielä vastaa (yritys {attempt + 1}/12), odotetaan 5s...")
+                time.sleep(5)
+        raise RuntimeError(f"FlareSolverr ei vastannut yrityksistä huolimatta: {last_error}")
+
+    def get(self, url, wait_seconds=0, timeout=60):
+        if self._cleared:
+            try:
+                resp = self.session.get(url, timeout=timeout)
+                if resp.status_code == 200 and not self._looks_challenged(resp.text):
+                    return resp.text
+                print("     [!] Eväste ei enää kelvannut, ratkaistaan Cloudflare uudelleen...")
+            except requests.RequestException as e:
+                print(f"     [!] Suora pyyntö epäonnistui ({e}), yritetään FlareSolverrin kautta...")
+        return self._solve(url, timeout=timeout)
+
+    def recreate(self):
+        """FlareSolverr-istunto ei tarvitse uudelleenluontia samalla tavalla kuin
+        Selenium-ajuri - eväste ratkaistaan tarvittaessa automaattisesti
+        uudelleen seuraavalla .get()-kutsulla."""
+        pass
+
+    def quit(self):
+        pass
+
+
+def create_fetcher():
+    """Palauttaa .get(url)-rajapinnan toteuttavan olion. Docker/ARM64-polulla
+    (FLARESOLVERR_URL asetettu, ks. docker-compose.yml) käytetään FlareSolverria,
+    Windowsilla/paikallisesti tavallista Selenium+undetected_chromedriver-ajuria
+    (create_driver(), ennallaan)."""
+    if FLARESOLVERR_URL:
+        print(f"[i] Käytetään FlareSolverria osoitteessa {FLARESOLVERR_URL}")
+        return FlareSolverrFetcher(FLARESOLVERR_URL)
+    print("Käynnistetään selain...")
+    return SeleniumFetcher(create_driver())
+
+def get_top_teams(fetcher, conn, top_n=TOP_N_TEAMS):
     """Hakee rankingista enintään top_n joukkuetta."""
     print(f"Haetaan Top {top_n} joukkueet...")
     url = f"{BASE_URL}/ranking/teams"
-    driver.get(url)
-    time.sleep(6)
+    html = fetcher.get(url)
 
-    check_cloudflare(driver)
-
-    soup = BeautifulSoup(driver.page_source, 'html.parser')
+    soup = BeautifulSoup(html, 'html.parser')
     teams_data = []
     all_ranked = soup.find_all('div', class_='ranked-team')
     teams = all_ranked[:top_n]
@@ -327,16 +442,14 @@ def extract_match_date(cell):
 
     return None
 
-def get_team_match_links(driver, team_id, team_name, start_date, end_date):
+def get_team_match_links(fetcher, team_id, team_name, start_date, end_date):
     print(f"\nHaetaan joukkueen {team_name} (ID: {team_id}) kartat aikaväliltä {start_date.strftime('%Y-%m-%d')} - {end_date.strftime('%Y-%m-%d')}...")
 
     url = f"{BASE_URL}/stats/teams/matches/{team_id}/{team_name.replace(' ', '-').lower()}?startDate={start_date.strftime('%Y-%m-%d')}&endDate={end_date.strftime('%Y-%m-%d')}"
-    driver.get(url)
-    time.sleep(random.uniform(5.0, 7.0))
+    html = fetcher.get(url)
+    time.sleep(random.uniform(5.0, 7.0))  # kohtelias viive ennen seuraavaa pyyntöä
 
-    check_cloudflare(driver)
-
-    soup = BeautifulSoup(driver.page_source, 'html.parser')
+    soup = BeautifulSoup(html, 'html.parser')
     match_links = []
 
     table = soup.find('table', class_='stats-table')
@@ -368,14 +481,12 @@ def get_team_match_links(driver, team_id, team_name, start_date, end_date):
     print(f"  Löydettiin {len(match_links)} pelattua karttaa joukkueelle {team_name}.")
     return match_links
 
-def get_match_stats(driver, conn, match_id, match_url, map_name, match_date):
+def get_match_stats(fetcher, conn, match_id, match_url, map_name, match_date):
     print(f"  -> Haetaan tilastot kartalle: {map_name} (ID: {match_id})...")
-    driver.get(match_url)
+    html = fetcher.get(match_url)
+    time.sleep(random.uniform(4.0, 7.0))  # kohtelias viive ennen seuraavaa pyyntöä
 
-    time.sleep(random.uniform(4.0, 7.0))
-    check_cloudflare(driver)
-
-    soup = BeautifulSoup(driver.page_source, 'html.parser')
+    soup = BeautifulSoup(html, 'html.parser')
     c = conn.cursor()
 
     try:
@@ -536,12 +647,11 @@ def get_match_stats(driver, conn, match_id, match_url, map_name, match_date):
 
 
 if __name__ == "__main__":
-    print("Käynnistetään selain...")
-    driver = create_driver()
+    fetcher = create_fetcher()
     db_conn = setup_database()
 
     try:
-        teams = get_top_teams(driver, db_conn, TOP_N_TEAMS)
+        teams = get_top_teams(fetcher, db_conn, TOP_N_TEAMS)
         if teams:
             for team_index, team in enumerate(teams, start=1):
                 print(f"\n===== Joukkue {team_index}/{len(teams)}: {team['name']} =====")
@@ -563,31 +673,25 @@ if __name__ == "__main__":
                     else:
                         print(f"  [i] {team['name']} ei ole skrapattu aiemmin, haetaan viimeiset {DEFAULT_LOOKBACK_DAYS} päivää.")
 
-                matches = get_team_match_links(driver, team['id'], team['name'], start_date, today)
+                matches = get_team_match_links(fetcher, team['id'], team['name'], start_date, today)
 
                 for match in matches:
                     if match_already_scraped(db_conn, match['id']):
                         print(f"  [i] Kartta {match['map_name']} (ID: {match['id']}) on jo tietokannassa, ohitetaan.")
                         continue
 
-                    # Yritetään hakea kartan tilastot. Jos selain jumiutuu tai kaatuu
-                    # (esim. ReadTimeoutError, WebDriverException), käynnistetään
-                    # selain uudelleen ja yritetään sama kartta vielä kerran ennen
-                    # kuin se lopulta ohitetaan - näin koko ajo ei kaadu yhteen
-                    # yksittäiseen ongelmalliseen sivulataukseen.
+                    # Yritetään hakea kartan tilastot. Jos haku jumiutuu tai kaatuu,
+                    # yritetään uudelleen ennen kuin se lopulta ohitetaan - näin koko
+                    # ajo ei kaadu yhteen yksittäiseen ongelmalliseen sivulataukseen.
                     for attempt in range(2):
                         try:
-                            get_match_stats(driver, db_conn, match['id'], match['url'], match['map_name'], match['match_date'])
+                            get_match_stats(fetcher, db_conn, match['id'], match['url'], match['map_name'], match['match_date'])
                             break
                         except (WebDriverException, TimeoutException, Exception) as e:
-                            print(f"  [VIRHE] Selain jumiutui/kaatui kartalla {match['map_name']} (yritys {attempt + 1}/2): {e}")
-                            print("  Käynnistetään selain uudelleen...")
-                            try:
-                                driver.quit()
-                            except Exception:
-                                pass
+                            print(f"  [VIRHE] Haku epäonnistui kartalla {match['map_name']} (yritys {attempt + 1}/2): {e}")
+                            print("  Yritetään uudelleen...")
+                            fetcher.recreate()
                             time.sleep(5)
-                            driver = create_driver()
                     else:
                         print(f"  [!] Kartta {match['map_name']} (ID: {match['id']}) epäonnistui kahdesti, ohitetaan lopullisesti.")
 
@@ -600,6 +704,5 @@ if __name__ == "__main__":
 
         print("\nKaikki valmista! Data on tietokannassa 'hltv_data.db'.")
     finally:
-        try: driver.quit()
-        except Exception: pass
+        fetcher.quit()
         db_conn.close()
