@@ -153,8 +153,28 @@ def _build_driver(version_main):
         options.add_argument('--disable-gpu')
         options.add_argument('--window-size=1920,1080')
         options.add_argument('--disable-blink-features=AutomationControlled')
+        # Lisää "stealth"-korjauksia, koska menetimme undetected_chromedriverin
+        # automaattisen piilotuksen kun jouduimme siirtymään pois siitä (ks.
+        # yllä oleva kommentti). Cloudflare tunnisti ensimmäisessä oikealla
+        # Pi:llä ajetussa testissä paljaan Seleniumin botiksi eikä päästänyt
+        # HLTV:n /ranking/teams-sivulle asti - nämä ovat yleisimmät ja
+        # tehokkaimmat yksittäiset tunnistemerkit joita Cloudflare katsoo.
+        options.add_experimental_option('excludeSwitches', ['enable-automation'])
+        options.add_experimental_option('useAutomationExtension', False)
+        options.add_argument(
+            '--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 '
+            '(KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36'
+        )
         service = ChromeService(executable_path=CHROMEDRIVER_BIN)
         driver = webdriver.Chrome(service=service, options=options)
+        # Piilottaa navigator.webdriver-lipun JOKAISELTA sivulta ennen kuin
+        # sivun oma JS ehtii ajaa - tämä on yksi yleisimmistä tavoista joilla
+        # Cloudflare (ja moni muu bottitunnistus) erottaa Seleniumin oikeasta
+        # selaimesta, eikä --disable-blink-features=AutomationControlled yksin
+        # aina riitä poistamaan sitä kokonaan.
+        driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
+            'source': "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+        })
         driver.set_page_load_timeout(60)
         return driver
 
@@ -193,7 +213,7 @@ def create_driver():
 
 def check_cloudflare(driver):
     """Tarkistaa, onko selain jumissa Cloudflaren tarkistusruudussa ja yrittää odottaa."""
-    for _ in range(4):
+    for _ in range(8):
         title = driver.title.lower()
         if "moment" in title or "cloudflare" in title or "just a moment" in title:
             print("     [!] Cloudflare-estoruutu havaittu, odotetaan 5 sekuntia ylimääräistä...")
