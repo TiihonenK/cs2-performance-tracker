@@ -19,6 +19,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 
+# Patchataan chromedriver-binaari poistamaan Selenium/ChromeDriverin sivuille
+# injektoima window.cdc_... -tunnistemerkki, jota mm. Cloudflaren tiukemmat
+# suojaustasot kayttavat automatisoidun selaimen tunnistamiseen (havaittiin
+# kasin testaten - HLTV:n yleisempi sivu paasi lapi, mutta /stats/-polku ei).
+# undetected_chromedriver tekisi taman automaattisesti, mutta sen oma
+# lataus/patch-logiikka ei toimi ARM64:lla - ks. patch_chromedriver.py.
+COPY scraper/patch_chromedriver.py /tmp/patch_chromedriver.py
+RUN python3 /tmp/patch_chromedriver.py && rm /tmp/patch_chromedriver.py
+
 ENV CHROME_BIN=/usr/bin/chromium
 ENV CHROMEDRIVER_BIN=/usr/bin/chromedriver
 # Estää Streamlit/pandas-tyylisten kirjastojen "onko uudempi versio" -verkkokutsuja
