@@ -38,3 +38,10 @@ services:
     volumes:
       - ./data:/app/db_data
     profiles: ["scraper"]
+    # VIANMÄÄRITYS (ARM64/Pi): Dockerin oletus-seccomp-suodatin näytti estävän
+    # Chromiumin sisäisen prosessienhallinnan (jäi jumiin ilman virhettä sivua
+    # ladatessa). "unconfined" poistaa suodattimen kokonaan tältä kontilta -
+    # turvallista tässä, koska scraper ei käsittele käyttäjän syötettä eikä ole
+    # verkosta suoraan saavutettavissa (ei porttimäärittelyä).
+    security_opt:
+      - seccomp:unconfined
