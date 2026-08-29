@@ -1,3 +1,7 @@
 *.db
 __pycache__/
 .vscode/
+
+# Pi-palvelimen dataa ja salaisuuksia - ei koskaan gitiin
+data/
+homeassistant/

@@ -5,83 +5,96 @@ from datetime import datetime
 import math
 
 # ============================================================================
-# KORJAUS 3/4: kierrosmäärän arvonta bootstrapilla oikeasta datasta
+# KIERROSMÄÄRÄ: kierrostason simulaatio (korvaa vanhan bootstrap-kaavan)
 # ============================================================================
-# CS2:n MR12-formaatissa jatkoaika alkaa vasta 28. kierroksesta 6 kierroksen
-# jaksoissa -> todellinen kierrosmääräjakauma on kaksihuippuinen (25-27 ja
-# 31-33 kierrosta eivät esiinny KOSKAAN). Aiempi malli arpoi kierrosmäärän
-# Normal(expected_rounds, scale=2.5) -jakaumasta, joka sekä levittää massaa
-# mahdottomille väleille että aliarvioi todellisen hajonnan (oikea keskihajonta
-# on n. 5.0 kierrosta, ei 2.5). Korjattu versio arpoo suoraan historiallisesta
-# jakaumasta (bootstrap), jaettuna kolmeen "koriin" ottelun tasaisuuden mukaan,
-# jotta suositun joukkueen ottelu ei arvo yhtä usein pitkää jatkoaikaottelua
-# kuin täysin tasaväkinen ottelu.
+# Vanha sample_match_lengths laski tavoitekeskiarvon kaavalla
+#     21.5 - |p - 0.5| * 2 * 8.5
+# jonka kerroin 8.5 ei ollut kalibroitu mihinkään. Se aliarvioi kierrosmäärän
+# rajusti heti kun ottelu ei ollut 50/50: kertoimella 1.33 (p=0.75) kaava antoi
+# 17.3 kierrosta, kun todellinen odotusarvo on 22.2. Koska tapot skaalautuvat
+# suoraan kierroksiin, kaikki tappoprojektiot olivat ~20-25 % liian matalia.
+#
+# Nyt kierrosmäärä simuloidaan kierros kierrokselta (ks. match_simulator.py):
+# kertoimista -> kartan voittotodennäköisyys -> kierrosvoittotodennäköisyys ->
+# pelataan kartta MR12-säännöillä jatkoaikoineen. Ei viritettäviä maagisia
+# kertoimia, ja jakauman muoto (mahdottomat 25-27 ja 31-33 puuttuvat, jatkoajan
+# osuus) tulee oikein ilman bootstrappia.
 
-_ROUND_DEVIATION_CACHE = None
-_OVERALL_MEAN_ROUNDS = None
-
-
-def _load_round_length_deviations():
-    """Lataa ja välimuistittaa jokaisen historiallisen kartan poikkeaman
-    (total_rounds - koko datan keskiarvo) sekä itse keskiarvon.
-
-    HUOM (korjattu versio): aiempi versio jakoi kartat kolmeen koriin
-    LOPPUTULOKSEN pistemarginaalin perusteella ja valitsi korin ENNAKKO-
-    todennäköisyyden perusteella. Nämä eivät ole sama asia - 50/50-ennakko-
-    ottelu EI tarkoita että lopputulos on todennäköisesti tasainen, se voi
-    yhtä hyvin olla selvä voitto. Koska "tasainen lopputulos" -kori sisälsi
-    paljon jatkoaikaotteluita, sen keskiarvo (26.4 kierrosta) oli 23 %
-    korkeampi kuin datan oikea 21.5 kierroksen keskiarvo, mikä ylihinnoitteli
-    tappoprojektiot systemaattisesti kaikissa suht. tasaisissa otteluissa.
-
-    Tämä versio keskittää arvonnan oikein kalibroituun tavoitekeskiarvoon
-    (ks. sample_match_lengths) ja lisää siihen bootstrapatun POIKKEAMAN koko
-    datan jakaumasta - 50/50-ottelu palautuu takaisin oikeaan 21.5 kierroksen
-    keskiarvoon, mutta jatkoajan aiheuttama epäjatkuva/kaksihuippuinen muoto
-    säilyy (Normal-jakauman sijaan)."""
-    global _ROUND_DEVIATION_CACHE, _OVERALL_MEAN_ROUNDS
-    if _ROUND_DEVIATION_CACHE is not None:
-        return _ROUND_DEVIATION_CACHE, _OVERALL_MEAN_ROUNDS
-
-    conn = sqlite3.connect('hltv_data.db')
-    df = pd.read_sql_query("SELECT score_team1, score_team2 FROM matches", conn)
-    conn.close()
-
-    df['total_rounds'] = df['score_team1'] + df['score_team2']
-    df = df[df['total_rounds'] >= 13]  # siivotaan mahdolliset virheelliset/kesken jääneet rivit
-
-    mean_rounds = float(df['total_rounds'].mean())
-    deviations = (df['total_rounds'] - mean_rounds).to_numpy(dtype=float)
-
-    _ROUND_DEVIATION_CACHE = deviations
-    _OVERALL_MEAN_ROUNDS = mean_rounds
-    return deviations, mean_rounds
+from match_simulator import (
+    simulate_match_context,
+    kpr_share_multiplier,
+    round_prob_from_map_prob,
+    map_win_prob,
+)
 
 
-def sample_match_lengths(win_prob, num_simulations=10000, skew_coefficient=8.5):
-    """Arpoo kierrosmäärätaulukon: tavoitekeskiarvo lasketaan ennakko-
-    todennäköisyyden perusteella (21.5 - skew * kerroin, sama periaate kuin
-    alkuperäisessä koodissa), ja siihen lisätään bootstrapattu poikkeama
-    oikeasta historiallisesta jakaumasta Normal-jakauman sijaan.
+def sample_match_lengths(win_prob, num_simulations=10000, **kwargs):
+    """VANHENTUNUT - säilytetty vain jotta vanha koodi ei kaadu.
 
-    win_prob: suositumman joukkueen voittotodennäköisyys (esim. 0.75).
-    skew_coefficient: kuinka paljon ennakkotodennäköisyyden vinous lyhentää
-    odotettua kierrosmäärää. Ei ole kalibroitu oikeaa historiallista
-    ennakkokerroindataa vastaan (sitä ei ole kannassa) - jos alat tallentaa
-    Pinnaclen kertoimet jokaiseen otteluun, tämän voi kalibroida regressiolla.
+    Palauttaa pelkät kierrosmäärät. Käytä mieluummin
+    simulate_match_context(), joka palauttaa myös kummankin joukkueen
+    kierrososuuden - simulate_team_kills tarvitsee sen."""
+    return simulate_match_context(win_prob, num_simulations)['rounds'].astype(float)
 
-    HUOM: sama palautettu taulukko kannattaa antaa MOLEMPIEN joukkueiden
-    simulate_team_kills-kutsuille, jotta obe joukkueen pelaajat "pelaavat"
-    saman simuloidun ottelun pituuden kussakin simulaatiokierroksessa.
+
+# Painotuksen puoliintumisaika päivinä (ks. get_team_players_overall_stats).
+#
+# MITATTU TAAKSEPÄINTESTILLÄ (4691 pelaaja-karttaa, aito out-of-sample):
+#   puoliintumisaika  60 pv -> r=0.271
+#                    120 pv -> r=0.275
+#                    180 pv -> r=0.275
+#          ei painotusta    -> r=0.275
+# Tuoreuspainotus ei siis paranna ennustetta käytännössä lainkaan, ja liian
+# lyhyt puoliintumisaika HUONONTAA sitä (melu voittaa signaalin). 150 pv on
+# käytännössä tasapaino: pitkä muisti, mutta rosterinvaihdos ehtii silti näkyä.
+HALF_LIFE_DAYS = 150
+
+
+def devig_two_way(odds_a, odds_b):
+    """Poistaa marginaalin kaksipuolisesta markkinasta ja palauttaa
+    (fair_p_a, fair_p_b, marginaali_prosentteina).
+
+    MIKSI TÄMÄ ON TÄRKEÄ: pelaajien tappomarkkinoissa marginaali on tyypillisesti
+    10-20 %, eli moninkertainen ottelun voittajaan (3-5 %) verrattuna. Kerroin 1.30
+    NÄYTTÄÄ tarkoittavan 76.9 % todennäköisyyttä, mutta 15 %:n marginaalilla
+    todellinen arvio on vain n. 67 %. Jos vertaat mallia raakaan 1/kerroin-lukuun,
+    markkina näyttää aina paljon varmemmalta kuin se on - ja malli näyttää
+    systemaattisesti "liian härältä" vaikka se olisi oikeassa.
     """
-    deviations, mean_rounds = _load_round_length_deviations()
-    skew = abs(win_prob - 0.5) * 2  # 0 = täysin tasan, 1 = äärimmäinen favoriitti
+    ia, ib = 1.0 / odds_a, 1.0 / odds_b
+    total = ia + ib
+    return ia / total, ib / total, (total - 1.0) * 100.0
 
-    target_mean = mean_rounds - skew * skew_coefficient
-    sampled_dev = np.random.choice(deviations, size=num_simulations, replace=True)
-    sim_lengths = target_mean + sampled_dev
 
-    return np.clip(sim_lengths, 13, None)
+def line_edge_table(sim_kills, book_lines):
+    """Vertaa mallia bookkerin KOKO linjatikkaisiin kerralla.
+
+    book_lines: lista (linja, kerroin_over, kerroin_under). Anna kerroin 0 tai None
+    jos toista puolta ei ole tarjolla - silloin marginaalia ei voi poistaa ja
+    rivi merkitään sen mukaan.
+
+    Palauttaa riveittäin mallin todennäköisyyden, marginaalista puhdistetun
+    markkinatodennäköisyyden ja odotusarvon (EV) molemmille puolille.
+    """
+    sim_kills = np.asarray(sim_kills)
+    rows = []
+    for line, o_over, o_under in book_lines:
+        p_over, p_under, fair_over, fair_under = kills_probability_at_line(sim_kills, line)
+        row = {'Linja': line, 'Malli P(over)': f"{p_over*100:.1f}%",
+               'Mallin raja (over)': fair_over, 'Mallin raja (under)': fair_under}
+        if o_over and o_under and o_over > 1 and o_under > 1:
+            mp_over, mp_under, margin = devig_two_way(o_over, o_under)
+            row['Markkina P(over)'] = f"{mp_over*100:.1f}%"
+            row['Marginaali'] = f"{margin:.1f}%"
+            row['EV over'] = f"{(p_over*o_over-1)*100:+.1f}%"
+            row['EV under'] = f"{(p_under*o_under-1)*100:+.1f}%"
+        else:
+            row['Markkina P(over)'] = "-"
+            row['Marginaali'] = "ei laskettavissa"
+            row['EV over'] = f"{(p_over*o_over-1)*100:+.1f}%" if o_over and o_over > 1 else "-"
+            row['EV under'] = f"{(p_under*o_under-1)*100:+.1f}%" if o_under and o_under > 1 else "-"
+        rows.append(row)
+    return rows
 
 
 def get_team_players_overall_stats(team_name, shrinkage_rounds=200):
@@ -144,7 +157,13 @@ def get_team_players_overall_stats(team_name, shrinkage_rounds=200):
     df['match_date'] = pd.to_datetime(df['match_date'], format='%Y-%m-%d', errors='coerce')
     now = pd.to_datetime('today')
     df['days_ago'] = (now - df['match_date']).dt.days.fillna(90)
-    df['weight'] = 1.0 + np.maximum(0, (90 - df['days_ago']) / 90) * 0.5
+    # KORJAUS: eksponentiaalinen puoliintumisaika lineaarisen 1.0-1.5 painon sijaan.
+    # Vanha paino antoi 240 päivää vanhalle kartalle painon 1.0 ja tuoreimmalle 1.5 -
+    # eli lähes tasapaino koko ikkunalle. Pelaajan rooli ja taso muuttuvat nopeammin
+    # kuin se. HALF_LIFE_DAYS=60 tarkoittaa että 60 pv vanha kartta painaa puolet
+    # tuoreesta ja 240 pv vanha enää 1/16 - malli seuraa nykyistä muotoa selvästi
+    # tarkemmin. Nosta lukua jos projektiot heiluvat liikaa, laske jos ne laahaavat.
+    df['weight'] = 0.5 ** (df['days_ago'] / HALF_LIFE_DAYS)
 
     raw_players = []
     for name, group in df.groupby('name'):
@@ -207,25 +226,42 @@ def get_team_players_overall_stats(team_name, shrinkage_rounds=200):
     return sorted(players, key=lambda x: x['kpr'], reverse=True)
 
 
-def simulate_team_kills(players_data, win_prob, sim_lengths, overdispersion=1.25, form_weight=0.3):
+def simulate_team_kills(players_data, sim_rounds, sim_share,
+                        overdispersion=1.10, form_weight=0.3):
     """Simuloi koko joukkueen kerralla ja palauttaa datan taulukkoa varten.
 
-    sim_lengths: KORJAUS 4 - valmiiksi arvottu kierrosmäärätaulukko
-    (sample_match_lengths-funktiosta), EI enää Normal-jakauma. Sama taulukko
-    tulisi antaa molemmille joukkueille samasta ottelusta.
+    sim_rounds: simuloidut kokonaiskierrosmäärät (ctx['rounds']).
+    sim_share:  TÄMÄN joukkueen kierrososuus samoissa simulaatioissa
+                (ctx['share_t1'] tai ctx['share_t2']).
 
-    overdispersion: KORJAUS 3 - Poissonin sijaan käytetään negatiivista
-    binomijakaumaa. Oikeasta datasta mitattuna (kontrolloitu kierrosmäärän
-    suhteen) tappomäärien varianssi on n. 1.2-1.3x suurempi kuin Poisson
-    ennustaisi - puhdas Poisson tekee simuloiduista P.over/P.under-luvuista
-    liian itsevarmoja. 1.25 on järkevä oletus, säädettävissä.
+    Molemmat tulevat samasta simulate_match_context-kutsusta, joten kummankin
+    joukkueen pelaajat pelaavat saman simuloidun kartan.
 
-    form_weight: KORJAUS - viimeisen 30 päivän muoto (recent_kpr) sekoitetaan
-    nyt oikeasti simulaatioon, ei ole enää pelkkä kosmeettinen sarake.
+    KORJAUS: pelaajan tappotahti skaalataan nyt simulaation TOTEUTUNEELLA
+    kierrososuudella, ei ennakkotodennäköisyydellä. Vanha kerroin
+        1 + (win_prob - 0.5) * 0.50
+    oli noin kaksinkertainen kannasta mitattuun nähden (mitattu: joukkueen
+    tapot/kierros = 1.82 + 2.94 * kierrososuus, eli +8.9 % kun osuus nousee
+    0.50 -> 0.60, ei +10 % pelkästä ennakkosuosikkiudesta). Tärkeämpää on että
+    sidonta toteutuneeseen osuuteen tuottaa oikean korrelaation: kartassa jonka
+    joukkue häviää 4-13 sillä on sekä vähän kierroksia ETTÄ matala tappotahti.
+
+    overdispersion: Poissonin sijaan negatiivinen binomijakauma, var = k * mean.
+    MITATTU TAAKSEPÄINTESTILLÄ (PIT-kalibrointi, 4691 pelaaja-karttaa):
+        1.05 -> poikkeama tasajakaumasta 4.6 %
+        1.10 -> 4.8 %   <- käytössä
+        1.25 -> 7.3 %   (vanha arvo, liian leveä)
+        1.50 -> 12.0 %
+    Vanha 1.25 oli kaksinkertaista kirjanpitoa: kierrosmäärän ja kierrososuuden
+    satunnaisuus tuo jo oman hajontansa, joten päälle ei tarvita paljoakaan.
+    Liian leveä jakauma näyttää arvoa kaukaisilla linjoilla siellä missä sitä ei ole.
     """
-    eff_multiplier = 1.0 + (win_prob - 0.5) * 0.50
-    sim_lengths = np.asarray(sim_lengths, dtype=float)
-    n_sims = len(sim_lengths)
+    sim_rounds = np.asarray(sim_rounds, dtype=float)
+    sim_share = np.asarray(sim_share, dtype=float)
+    n_sims = len(sim_rounds)
+
+    # Kerroin per simulaatio, ei enää yksi vakio koko ottelulle
+    share_mult = np.asarray(kpr_share_multiplier(sim_share), dtype=float)
 
     results = []
     for p in players_data:
@@ -233,19 +269,24 @@ def simulate_team_kills(players_data, win_prob, sim_lengths, overdispersion=1.25
         if p.get('recent_kpr') is not None:
             base_kpr = (1 - form_weight) * base_kpr + form_weight * p['recent_kpr']
 
-        eff_kpr = max(base_kpr, 0.001) * eff_multiplier
-        expected_k = sim_lengths * eff_kpr
+        eff_kpr = max(base_kpr, 0.001)
+        expected_k = np.maximum(sim_rounds * eff_kpr * share_mult, 1e-6)
 
         # Negatiivinen binomijakauma: var = overdispersion * mean (vakio p-parametri)
-        p_param = 1.0 / overdispersion
-        r_param = expected_k / (overdispersion - 1)
-        sim_kills = np.random.negative_binomial(r_param, p_param)
+        if overdispersion > 1.0:
+            p_param = 1.0 / overdispersion
+            r_param = np.maximum(expected_k / (overdispersion - 1.0), 1e-6)
+            sim_kills = np.random.negative_binomial(r_param, p_param)
+        else:
+            sim_kills = np.random.poisson(expected_k)
 
         proj_k = np.mean(sim_kills)
         std_k = np.std(sim_kills)
 
-        # Mallin oma "reilu" linja - HUOM: tämä EI ole bookkerin tarjoama linja,
-        # ks. kills_probability_at_line() arvioidaksesi todellista bookkerin lukua.
+        # Mallin oma keskikohta = projektion pyöristys alaspäin + 0.5. Tämä EI ole
+        # linja johon voi lyödä eikä sen kuulu osua bookkerin lukuun - se on vain
+        # luettava tapa näyttää mihin projektio asettuu. Varsinainen työkalu on
+        # kills_probability_at_line(), joka hinnoittelee bookkerin OIKEAN linjan.
         base_line = int(math.floor(proj_k))
         line = base_line + 0.5
 
@@ -258,7 +299,7 @@ def simulate_team_kills(players_data, win_prob, sim_lengths, overdispersion=1.25
             'KPR': round(p['kpr'], 3),
             'Proj.K': round(proj_k, 2),
             'stdK': round(std_k, 2),
-            'Line': line,
+            'Mallin linja': line,
             'P.over': f"{p_over * 100:.1f}%",
             'P.under': f"{p_under * 100:.1f}%",
             'Form (30d)': p['form'],

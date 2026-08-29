@@ -7,9 +7,9 @@ from datetime import datetime
 from players_props import (
     get_team_players_overall_stats,
     simulate_team_kills,
-    sample_match_lengths,
     kills_probability_at_line,
 )
+from match_simulator import simulate_match_context
 
 def init_betting_db():
     conn = sqlite3.connect('my_bets.db')
@@ -30,6 +30,17 @@ def init_betting_db():
         c.execute("ALTER TABLE bets ADD COLUMN map TEXT DEFAULT 'Kartta 1'")
     except sqlite3.OperationalError:
         pass
+
+    # UUSI JA TÄRKEIN: mallin oma todennäköisyys vedon hetkellä + sulkeutumiskerroin.
+    # Ilman näitä et voi JÄLKIKÄTEEN tarkistaa onko malli kalibroitu (osuuko 60 %:n
+    # vedoista oikeasti 60 %) etkä laskea CLV:tä (voititko markkinan liikkeen).
+    # Pelkkä voitto/tappio-historia vaatii satoja vetoja ennen kuin siitä näkee
+    # mitään; kalibrointi ja CLV kertovat saman asian kymmenesosalla otoksesta.
+    for col, ddl in [("model_prob", "REAL"), ("closing_odds", "REAL")]:
+        try:
+            c.execute(f"ALTER TABLE bets ADD COLUMN {col} {ddl}")
+        except sqlite3.OperationalError:
+            pass
         
     # UUSI: Luodaan turnaustaulu
     c.execute('''CREATE TABLE IF NOT EXISTS tournaments
@@ -44,12 +55,12 @@ def init_betting_db():
     conn.close()
 
 # UUSI: save_bet ottaa nyt vastaan myös turnauksen nimen JA kartan
-def save_bet(bet_type, description, stake, odds, tournament, map_name):
+def save_bet(bet_type, description, stake, odds, tournament, map_name, model_prob=None):
     date_str = datetime.now().strftime("%Y-%m-%d %H:%M")
     conn = sqlite3.connect('my_bets.db')
     c = conn.cursor()
-    c.execute("INSERT INTO bets (date, type, description, stake, odds, status, tournament, map) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-              (date_str, bet_type, description, stake, odds, "Odottaa", tournament, map_name))
+    c.execute("INSERT INTO bets (date, type, description, stake, odds, status, tournament, map, model_prob) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              (date_str, bet_type, description, stake, odds, "Odottaa", tournament, map_name, model_prob))
     conn.commit()
     conn.close()
     st.success(f"✅ Veto tallennettu turnaukseen: {tournament} ({map_name})!")
@@ -108,12 +119,31 @@ with tab1:
     st.header("Vedonlyönti")
     
     # Yläosan valikot ja kertoimet
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3, c4, c5 = st.columns([2, 1, 2, 1, 1])
     team1 = c1.selectbox("Joukkue 1:", team_names_list, index=None)
     odds1 = c2.number_input(f"Kerroin (Joukkue 1)", min_value=1.01, value=1.85, step=0.01)
-    
+
     team2 = c3.selectbox("Joukkue 2:", team_names_list, index=None)
     odds2 = c4.number_input(f"Kerroin (Joukkue 2)", min_value=1.01, value=1.85, step=0.01)
+
+    # UUSI: kartta valitaan jo tässä, joukkueiden ja kertoimien yhteydessä - ei
+    # enää erikseen vetolomakkeella. Streamlit säilyttää valinnan (key=) yli
+    # koko sivun uudelleenajojen, joten sama arvo kulkee automaattisesti mukaan
+    # alempana "Kirjaa veto" -lomakkeeseen ilman että sitä tarvitsee muistaa
+    # vaihtaa erikseen ennen vedon tallennusta.
+    valittu_kartta = c5.selectbox("Kartta:", [f"Kartta {i}" for i in range(1, 6)], key="selected_map")
+
+    # PINNACLEN KIERROSTOTAL. Markkinan arvio kartan kestosta on parempi kuin
+    # historiaan sovitettu malli: siinä on mukana kartta, kokoonpanot, LAN/online
+    # ja kaikki mitä kanta ei tunne. Simulaatiota ei silti voi poistaa - totalista
+    # saa vain keskikohdan, ja tappotodennäköisyyksiin tarvitaan koko jakauma.
+    # Ankkurointi ottaa markkinalta TASON ja jättää mallille MUODON.
+    t1c, t2c, t3c = st.columns(3)
+    total_line = t1c.number_input("Pinnaclen kierrostotal (0 = ei käytössä)",
+                                  min_value=0.0, max_value=40.0, value=0.0, step=0.5)
+    total_over = t2c.number_input("Kerroin YLI", min_value=0.0, value=0.0, step=0.01,
+                                  help="Valinnainen. Molemmat kertoimet antamalla marginaali poistetaan ja ankkurointi on tarkin.")
+    total_under = t3c.number_input("Kerroin ALLE", min_value=0.0, value=0.0, step=0.01)
 
     if st.button("Laske arviot", type="primary") and team1 and team2 and team1 != team2:
         with st.spinner("Simuloidaan joukkueita..."):
@@ -124,21 +154,44 @@ with tab1:
             prob1 = p1_implied / margin
             prob2 = p2_implied / margin
 
-            # KORJAUS: kierrosmäärä arvotaan bootstrapilla oikeasta historiallisesta
-            # jakaumasta (ei enää Normal-jakaumalla laskettu 21.5 - |p1-p2|*8.5).
-            # Sama taulukko annetaan molemmille joukkueille, jotta obe joukkueen
-            # pelaajat "pelaavat" saman simuloidun ottelun pituuden.
-            sim_lengths = sample_match_lengths(prob1, num_simulations=10000)
+            # KORJAUS: kartta simuloidaan kierros kierrokselta MR12-säännöillä
+            # (ks. match_simulator.py). Vanha kaava 21.5 - |p1-p2|*8.5 aliarvioi
+            # kierrosmäärän 5-6 kierroksella heti kun ottelussa oli selvä suosikki.
+            # Sama konteksti annetaan molemmille joukkueille, jotta kaikki pelaajat
+            # pelaavat saman simuloidun kartan.
+            ctx = simulate_match_context(
+                prob1,
+                num_simulations=10000,
+                total_line=(total_line if total_line > 0 else None),
+                total_over_odds=(total_over if total_over > 1 else None),
+                total_under_odds=(total_under if total_under > 1 else None),
+            )
 
             t1_players = get_team_players_overall_stats(team1)
             t2_players = get_team_players_overall_stats(team2)
 
-            t1_sim = simulate_team_kills(t1_players, prob1, sim_lengths)
-            t2_sim = simulate_team_kills(t2_players, prob2, sim_lengths)
+            t1_sim = simulate_team_kills(t1_players, ctx['rounds'], ctx['share_t1'])
+            t2_sim = simulate_team_kills(t2_players, ctx['rounds'], ctx['share_t2'])
 
             st.session_state['sim_results'] = {
                 't1': team1, 't2': team2, 'p1': prob1, 'p2': prob2,
-                'rounds': float(np.mean(sim_lengths)),
+                # KORJAUS: näytetään MEDIAANI, ei keskiarvo. Jatkoaikahäntä
+                # (kartat jotka venyvät 28-40+ kierrokseen) vetää keskiarvoa
+                # ylöspäin vaikka ENEMMISTÖ karttoja päättyisi lyhyempään -
+                # kun kierrostotal on ankkuroitu markkinaan (esim. Pinnaclen
+                # linja 21.5, ALLE suosikkina), keskiarvo saattoi näyttää
+                # LUVUN LINJAN YLÄPUOLELLA vaikka malli oli juuri sovitettu
+                # osoittamaan ALLE:n olevan todennäköisempi - ristiriitainen
+                # näky vaikka matematiikka oli oikein. Mediaani ei kärsi
+                # tästä ja vastaa suoraan sitä mistä puolesta linjaa suurin
+                # osa todennäköisyysmassasta on.
+                'rounds': ctx['median_rounds'],
+                'anchored': total_line > 0,
+                # Kuinka monta kierrosta kumpikin joukkue simulaatiossa keskimäärin
+                # voittaa - suoraan samasta kierros-kierrokselta-simulaatiosta josta
+                # tappoprojektiotkin lasketaan (share_t1/share_t2 kertaa kierrokset).
+                't1_rounds_won': float((ctx['rounds'] * ctx['share_t1']).mean()),
+                't2_rounds_won': float((ctx['rounds'] * ctx['share_t2']).mean()),
                 't1_data': t1_sim, 't2_data': t2_sim,
             }
 
@@ -146,8 +199,21 @@ with tab1:
     if 'sim_results' in st.session_state:
         res = st.session_state['sim_results']
         st.write("---")
-        st.markdown(f"### **{res['t1']} vs {res['t2']}** — Arvioitu kesto: **{res['rounds']:.2f}** kierrosta")
+        _lahde = "Pinnaclen totalista" if res.get('anchored') else "mallin oma arvio"
+        st.markdown(
+            f"### **{res['t1']} vs {res['t2']}** — Arvioitu kesto: **{res['rounds']:.1f}** kierrosta "
+            f"<span style='font-size:0.6em;opacity:0.6'>({_lahde})</span>",
+            unsafe_allow_html=True,
+        )
         st.markdown(f"*{res['t1']} ({res['p1']*100:.1f}%) | {res['t2']} ({res['p2']*100:.1f}%)*")
+        # HUOM: tämä on KESKIARVO (ei mediaani, kuten otsikon kesto) ja voi siksi
+        # summautua eri lukuun kuin otsikon kierrosmäärä - molemmat ovat oikein,
+        # vinossa jakaumassa mediaani ja keskiarvo vain eroavat toisistaan
+        # (ks. otsikon yllä oleva kommentti tästä samasta ilmiöstä).
+        st.caption(
+            f"Simuloitu kierrosjako (keskiarvo): {res['t1']} {res['t1_rounds_won']:.1f} — "
+            f"{res['t2']} {res['t2_rounds_won']:.1f}"
+        )
 
         # Kootaan hakemisto pelaajan nimi -> raaka simulaatiotaulukko, jotta
         # sitä voidaan käyttää alempana mielivaltaisen (esim. bookkerin) linjan
@@ -166,12 +232,6 @@ with tab1:
         df2 = pd.DataFrame(res['t2_data']).drop(columns=['_sim_kills'])
         st.dataframe(df2, width='stretch', hide_index=True)
 
-        st.caption(
-            "'Line'-sarake on mallin oma automaattisesti generoitu keskikohta - "
-            "EI bookkerin tarjoamaa linjaa. Käytä alla olevaa vetolomaketta nähdäksesi "
-            "mallin arvion juuri sille linjalle, jonka bookkeri oikeasti tarjoaa."
-        )
-
         # VEDONLYÖNTILOMAKE
         st.write("---")
         st.subheader("Kirjaa veto")
@@ -186,11 +246,11 @@ with tab1:
         # HUOM: tämä osio EI ole enää st.form:in sisällä, koska Streamlit-formit
         # eivät päivity reaaliaikaisesti - haluamme näyttää mallin arvion heti
         # kun käyttäjä vaihtaa pelaajaa/linjaa, ennen tallennusta.
-        c1, c2, c3, c4 = st.columns(4)
+        c1, c2, c3 = st.columns(3)
         valittu_pelaaja = c1.selectbox("Pelaaja:", player_names, key="bet_player")
         suunta = c2.radio("Suunta:", ["OVER", "UNDER"], horizontal=True, key="bet_direction")
         custom_line = c3.number_input("Raja (esim 14.5)", value=14.5, step=0.5, key="bet_line")
-        valittu_kartta = c4.selectbox("Kartta:", [f"Kartta {i}" for i in range(1, 6)], key="bet_map")
+        st.caption(f"🗺️ Kartta: **{valittu_kartta}** (valitaan yllä joukkuevalinnan yhteydessä)")
 
         # KORJAUS 1 (ydinkorjaus): mallin arvio lasketaan AINA juuri sille linjalle
         # jonka käyttäjä syöttää tähän - ei mallin omalle auto-generoidulle linjalle.
@@ -219,9 +279,24 @@ with tab1:
             else:
                 st.warning(f"⚠️ Bookkerin kerroin ({kerroin}) EI ylitä mallin kerroinrajaa ({model_odds:.2f}).")
 
+            # Kelly-panossuositus. Täysi Kelly on käytännössä liian aggressiivinen,
+            # koska mallin todennäköisyys on itsekin arvio - neljäsosa-Kelly on
+            # tavallinen kompromissi. Jos suositus on negatiivinen, vetoa ei ole.
+            b = kerroin - 1.0
+            kelly = (model_p * b - (1 - model_p)) / b if b > 0 else 0.0
+            if kelly > 0:
+                st.caption(
+                    f"Kelly: täysi {kelly*100:.1f} % kassasta, "
+                    f"**neljäsosa-Kelly {kelly*25:.2f} %** (1000 € kassalla {kelly*250:.2f} €). "
+                    f"Mallin EV {(model_p*kerroin-1)*100:+.1f} %."
+                )
+            else:
+                st.caption("Kelly: ei panosta — mallin mukaan negatiivinen odotusarvo.")
+
         if st.button("Tallenna veto", type="primary"):
             desc = f"{valittu_pelaaja} {suunta} {custom_line} ({res['t1']} vs {res['t2']}, {valittu_kartta})"
-            save_bet("Tapot", desc, panos, kerroin, valittu_turnaus, valittu_kartta)
+            save_bet("Tapot", desc, panos, kerroin, valittu_turnaus, valittu_kartta,
+                     model_prob=(model_p if model_odds else None))
 
 # ==========================================
 # VÄLILEHTI 2: VETOSEURANTA JA TURNAUKSET
@@ -390,6 +465,31 @@ with tab2:
         else:
             st.info("Ei suljettuja turnauksia historiassa.")
             
+        st.write("---")
+        st.subheader("🎯 Mallin kalibrointi")
+        st.caption(
+            "Osuuko malli oikeaan? Jos mallin mukaan 60 %:n vedoista pitäisi voittaa 60 %, "
+            "toteutuneen osumaprosentin pitää olla lähellä sitä. Tämä kertoo mallin kunnon "
+            "kymmenesosalla siitä otoksesta jonka ROI vaatisi. Vaatii että vedot on tallennettu "
+            "mallin arvion kanssa (uudet vedot tallentuvat automaattisesti)."
+        )
+        cal = bets_df[bets_df['status'].isin(['Voitto', 'Tappio'])].copy() if not bets_df.empty else pd.DataFrame()
+        if not cal.empty and 'model_prob' in cal.columns:
+            cal = cal[cal['model_prob'].notna()]
+        if not cal.empty:
+            cal['osui'] = (cal['status'] == 'Voitto').astype(int)
+            cal['kori'] = pd.cut(cal['model_prob'], [0, .45, .5, .55, .6, .7, 1.0])
+            summary = cal.groupby('kori', observed=True).agg(
+                vetoja=('osui', 'size'),
+                mallin_arvio=('model_prob', lambda x: f"{x.mean()*100:.1f} %"),
+                toteutunut=('osui', lambda x: f"{x.mean()*100:.1f} %"),
+            ).reset_index()
+            st.dataframe(summary, width='stretch', hide_index=True)
+            st.caption(f"Yhteensä {len(cal)} ratkaistua vetoa mallin arvion kanssa. "
+                       "Alle ~50 vedolla luvut heiluvat vielä paljon.")
+        else:
+            st.info("Ei vielä ratkaistuja vetoja joissa mallin arvio olisi tallessa.")
+
         st.write("---")
         st.subheader("Kaikki vedot (All-time)")
         if not bets_df.empty:
