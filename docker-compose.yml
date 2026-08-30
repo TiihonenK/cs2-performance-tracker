@@ -1,14 +1,20 @@
 services:
-  # --- Home Assistant (palautetaan HAOS-varmuuskopiosta, ks. docs/01) ---
-  homeassistant:
-    image: ghcr.io/home-assistant/home-assistant:stable
-    container_name: homeassistant
-    volumes:
-      - ./homeassistant:/config
-      - /etc/localtime:/etc/localtime:ro
+  # --- Homebridge (HomeKit-silta muille kuin natiiveille HomeKit-laitteille) ---
+  # Home Assistantia ei koskaan otettu tuotantoon tällä Pi:llä (jätettiin
+  # tarkoituksella palauttamatta) - Homebridge korvaa sen tässä, kevyempänä
+  # ratkaisuna kun tavoite on saada laitteet Apple Home -sovellukseen.
+  homebridge:
+    image: homebridge/homebridge:latest
+    container_name: homebridge
     restart: unless-stopped
-    privileged: true      # HA:n oma suositus - tarvitaan mm. USB-laitteille (Zigbee/Z-Wave-tikut)
-    network_mode: host    # HA:n oma suositus - mDNS-löytäminen (esim. Chromecastit) ei toimi ilman tätä
+    network_mode: host    # Pakollinen: HomeKit-pariliitos/löytäminen perustuu
+                           # mDNS/Bonjour-lähetyksiin, jotka eivät kulje Dockerin
+                           # oman bridge-verkon läpi (sama syy kuin Home Assistantilla).
+    volumes:
+      - ./homebridge:/homebridge
+    environment:
+      - TZ=Europe/Helsinki
+      - ENABLE_AVAHI=1
 
   # --- Vedonlyöntidashboard (Streamlit) ---
   dashboard:
