@@ -376,6 +376,12 @@ with tab2:
         # esim. jos näppäiliit väärän linjan tai valitsit väärän turnauksen.
         st.subheader("Muokkaa aktiivisia vetoja")
         active_bets_for_edit = bets_df[bets_df['status'] == 'Odottaa']
+        # HUOM: EI käytetä tab1:n "active_tournaments"-muuttujaa - se määritellään
+        # siellä vain jos käyttäjä on jo ajanut simulaation tällä istunnolla
+        # (session_state['sim_results']), joten se voi puuttua kokonaan kun tätä
+        # välilehteä käytetään. tournaments_df on sen sijaan ladattu heti tab2:n
+        # alussa (rivi 330) ja on siis aina käytettävissä täällä.
+        edit_active_tournaments = tournaments_df[tournaments_df['status'] == 'Aktiivinen']['name'].tolist()
 
         if not active_bets_for_edit.empty:
             with st.expander("✏️ Etsi ja muokkaa vireillä olevaa vetoa", expanded=False):
@@ -411,9 +417,9 @@ with tab2:
 
                         row1c1, row1c2, row1c3 = st.columns(3)
                         new_a_tournament = row1c1.selectbox(
-                            "Turnaus", active_tournaments,
-                            index=(active_tournaments.index(abet['tournament'])
-                                   if abet['tournament'] in active_tournaments else 0),
+                            "Turnaus", edit_active_tournaments,
+                            index=(edit_active_tournaments.index(abet['tournament'])
+                                   if abet['tournament'] in edit_active_tournaments else 0),
                         )
                         map_options = [f"Kartta {i}" for i in range(1, 6)]
                         new_a_map = row1c2.selectbox(
