@@ -1,5 +1,6 @@
 import streamlit as st
 import sqlite3
+import json
 import pandas as pd
 import numpy as np
 from datetime import datetime
@@ -137,13 +138,100 @@ tab1, tab2 = st.tabs(["Vedonlyönti", "📈 Vetoseuranta"])
 with tab1:
     st.header("Vedonlyönti")
 
+    # ==========================================
+    # UUSI: PINNACLEN KERTOIMIEN LIITTÄMINEN (JSON)
+    # ==========================================
+    # Sen sijaan että kertoimet, kartan kesto ja Yli/Alle-linja näppäillään
+    # käsin kuvasta katsoen, tähän voi liittää Claudelta saadun JSON-pätkän
+    # (poimittu suoraan Pinnaclen kerroinkuvasta) ja ladata yhden
+    # ottelun/kartan tiedot suoraan alla oleviin kenttiin napin painalluksella.
+    # Kaikki alla olevat kentät saavat tästä syystä key=-parametrin, jotta
+    # "Lataa kertoimet" -nappi voi asettaa niiden arvot session_statesta.
+    with st.expander("📋 Liitä Pinnaclen kertoimet (JSON)", expanded=False):
+        st.caption(
+            "Liitä tähän JSON, jossa on Pinnaclen kertoimet (joukkueet, "
+            "voittajan kertoimet, kartan Yli/Alle-kierrosraja kertoimineen). "
+            "Valitse sen jälkeen alta ladattava ottelu/kartta."
+        )
+        pinnacle_json_text = st.text_area(
+            "JSON:", height=150, key="pinnacle_json_text",
+            placeholder='{"matches": [{"team1": "...", "team2": "...", "maps": '
+                        '[{"map": "Kartta 1", "odds1": 1.85, "odds2": 1.95, '
+                        '"total_line": 21.5, "over_odds": 1.9, "under_odds": 1.9}]}]}',
+        )
+
+        parsed_matches = []
+        if pinnacle_json_text.strip():
+            try:
+                parsed_matches = json.loads(pinnacle_json_text).get("matches", [])
+            except (json.JSONDecodeError, AttributeError) as e:
+                st.error(f"JSON ei kelpaa: {e}")
+
+        if pinnacle_json_text.strip() and not parsed_matches:
+            st.warning('JSON:sta ei löytynyt yhtään ottelua ("matches"-lista puuttuu tai on tyhjä).')
+
+        if parsed_matches:
+            # HUOM: käytetään listaindeksiä avaimena (ei pelkkää tekstiä), koska
+            # kaksi eri ottelua saman turnauksen sisällä voisi muuten tuottaa
+            # identtisen näköisen valinnan (esim. sama kartta molemmissa).
+            load_options = {}
+            for mi, m in enumerate(parsed_matches):
+                for mpi, mp in enumerate(m.get("maps", [])):
+                    label = f"{m.get('team1', '?')} vs {m.get('team2', '?')} - {mp.get('map', '?')}"
+                    load_options[f"{label}##{mi}.{mpi}"] = (m, mp)
+
+            selected_load_key = st.selectbox(
+                "Ottelu / kartta:", list(load_options.keys()),
+                index=None, placeholder="Valitse ladattava kartta...",
+                format_func=lambda k: k.split("##")[0],
+                key="pinnacle_load_select",
+            )
+
+            if st.button("Lataa kertoimet", type="primary") and selected_load_key:
+                m, mp = load_options[selected_load_key]
+                t1_name, t2_name = m.get("team1", ""), m.get("team2", "")
+
+                missing = [t for t in (t1_name, t2_name) if t not in team_names_list]
+                if missing:
+                    st.warning(
+                        f"⚠️ Joukkuetta/joukkueita ei löytynyt kannasta täsmälleen: "
+                        f"**{', '.join(missing)}**. Pinnacle saattaa käyttää eri "
+                        f"nimeä kuin kanta (esim. \"BB Team\" vs. \"BetBoom\") - "
+                        f"korjaa nimi JSON:iin tai valitse joukkue(et) käsin alta. "
+                        f"Muut kentät (kerroin, kartta, total) ladattiin silti."
+                    )
+                for t_key, t_name in (("team1_select", t1_name), ("team2_select", t2_name)):
+                    if t_name in team_names_list:
+                        st.session_state[t_key] = t_name
+
+                if mp.get("odds1") is not None:
+                    st.session_state["odds1_input"] = float(mp["odds1"])
+                if mp.get("odds2") is not None:
+                    st.session_state["odds2_input"] = float(mp["odds2"])
+                if mp.get("map") in [f"Kartta {i}" for i in range(1, 6)]:
+                    st.session_state["selected_map"] = mp["map"]
+
+                # Pinnaclen oma Yli/Alle-kierrosraja on markkinatietoa - parempi
+                # arvio kartan kestosta kuin mallin oma, kertoimien vinouteen
+                # perustuva arvaus (ks. kommentti alempana "Ankkurointi"-kohdassa).
+                total_line_val = mp.get("total_line")
+                if total_line_val:
+                    st.session_state["total_line_input"] = float(total_line_val)
+                    if mp.get("over_odds") is not None:
+                        st.session_state["total_over_input"] = float(mp["over_odds"])
+                    if mp.get("under_odds") is not None:
+                        st.session_state["total_under_input"] = float(mp["under_odds"])
+
+                st.success(f"✅ Kertoimet ladattu: {selected_load_key.split('##')[0]}")
+                st.rerun()
+
     # Yläosan valikot ja kertoimet
     c1, c2, c3, c4, c5 = st.columns([2, 1, 2, 1, 1])
-    team1 = c1.selectbox("Joukkue 1:", team_names_list, index=None)
-    odds1 = c2.number_input(f"Kerroin (Joukkue 1)", min_value=1.01, value=1.85, step=0.01)
+    team1 = c1.selectbox("Joukkue 1:", team_names_list, index=None, key="team1_select")
+    odds1 = c2.number_input(f"Kerroin (Joukkue 1)", min_value=1.01, value=1.85, step=0.01, key="odds1_input")
 
-    team2 = c3.selectbox("Joukkue 2:", team_names_list, index=None)
-    odds2 = c4.number_input(f"Kerroin (Joukkue 2)", min_value=1.01, value=1.85, step=0.01)
+    team2 = c3.selectbox("Joukkue 2:", team_names_list, index=None, key="team2_select")
+    odds2 = c4.number_input(f"Kerroin (Joukkue 2)", min_value=1.01, value=1.85, step=0.01, key="odds2_input")
 
     # UUSI: kartta valitaan jo tässä, joukkueiden ja kertoimien yhteydessä - ei
     # enää erikseen vetolomakkeella. Streamlit säilyttää valinnan (key=) yli
@@ -159,10 +247,12 @@ with tab1:
     # Ankkurointi ottaa markkinalta TASON ja jättää mallille MUODON.
     t1c, t2c, t3c = st.columns(3)
     total_line = t1c.number_input("Pinnaclen kierrostotal (0 = ei käytössä)",
-                                  min_value=0.0, max_value=40.0, value=0.0, step=0.5)
-    total_over = t2c.number_input("Kerroin YLI", min_value=0.0, value=0.0, step=0.01,
+                                  min_value=0.0, max_value=40.0, value=0.0, step=0.5, key="total_line_input")
+    total_over = t2c.number_input("Kerroin YLI", min_value=0.0, value=0.0, step=0.01, key="total_over_input",
                                   help="Valinnainen. Molemmat kertoimet antamalla marginaali poistetaan ja ankkurointi on tarkin.")
-    total_under = t3c.number_input("Kerroin ALLE", min_value=0.0, value=0.0, step=0.01)
+    total_under = t3c.number_input("Kerroin ALLE", min_value=0.0, value=0.0, step=0.01, key="total_under_input")
+    if total_line > 0:
+        st.caption("📡 Kierrosmäärä kalibroidaan Pinnaclen linjaan (ei mallin omaan arvioon).")
 
     if st.button("Laske arviot", type="primary") and team1 and team2 and team1 != team2:
         with st.spinner("Simuloidaan joukkueita..."):
