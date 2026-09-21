@@ -56,6 +56,15 @@ def init_betting_db():
         except sqlite3.OperationalError:
             pass
 
+    # UUSI: cashout-summa. Kun veto ratkaistaan cashoutilla kesken ottelun
+    # (status = 'Cashout'), tähän tallennetaan mikä summa siitä saatiin -
+    # tuotto lasketaan sitten (saatu summa - panos), ei alkuperäisen
+    # kertoimen mukaan, koska cashout-hinta on eri kuin lähtökerroin.
+    try:
+        c.execute("ALTER TABLE bets ADD COLUMN cashout_amount REAL")
+    except sqlite3.OperationalError:
+        pass
+
     # UUSI: Luodaan turnaustaulu
     c.execute('''CREATE TABLE IF NOT EXISTS tournaments
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, status TEXT)''')
@@ -98,21 +107,39 @@ def filter_bets(df, query):
         mask = mask | df[col].astype(str).str.lower().str.contains(q, na=False)
     return df[mask]
 
+def bet_profit(row):
+    """Yhden vedon tuotto.
+
+    Voitto/Tappio: panos x (kerroin - 1) voitosta, -panos tappiosta.
+    Cashout: saatu summa miinus alkuperäinen panos - eri kertoimella kuin
+    lähtökerroin, koska cashout-hinta tarjotaan kesken ottelun eikä vastaa
+    enää alkuperäistä kerrointa. Voi olla plus- tai miinusmerkkinen riippuen
+    siitä ehditäänkö kassaan ulos ennen vai jälkeen sen kun veto olisi
+    muutenkin kääntynyt voitolliseksi/tappiolliseksi.
+    """
+    status = row['status']
+    stake = row['stake']
+    if status == 'Voitto':
+        return stake * (row['odds'] - 1)
+    if status == 'Tappio':
+        return -stake
+    if status == 'Cashout':
+        cashout = row.get('cashout_amount')
+        cashout = float(cashout) if pd.notna(cashout) else 0.0
+        return cashout - stake
+    return 0.0
+
 def show_bet_summary(df):
     """Näyttää yhteenvedon (ROI %, vetojen määrä, tulos €, vireillä olevat) annetusta
-    vetojoukosta. ROI lasketaan vain RATKAISTUISTA vedoista (Voitto/Tappio), koska
-    odottavien vetojen panos ei vielä ole tuottanut mitään tulosta - sen mukaan
+    vetojoukosta. ROI lasketaan vain RATKAISTUISTA vedoista (Voitto/Tappio/Cashout),
+    koska odottavien vetojen panos ei vielä ole tuottanut mitään tulosta - sen mukaan
     ottaminen nimittäjään vääristäisi lukua turhaan huonompaan suuntaan."""
     total_bets = len(df)
-    settled = df[df['status'].isin(['Voitto', 'Tappio'])]
+    settled = df[df['status'].isin(['Voitto', 'Tappio', 'Cashout'])]
     pending = df[df['status'] == 'Odottaa']
     total_staked_settled = settled['stake'].sum()
 
-    profit_per_row = df.apply(
-        lambda x: (x['stake'] * (x['odds'] - 1)) if x['status'] == 'Voitto'
-        else (-x['stake'] if x['status'] == 'Tappio' else 0),
-        axis=1
-    )
+    profit_per_row = df.apply(bet_profit, axis=1)
     total_profit = profit_per_row.sum()
     roi = (total_profit / total_staked_settled * 100) if total_staked_settled > 0 else 0.0
 
@@ -225,20 +252,30 @@ with tab1:
                 st.success(f"✅ Kertoimet ladattu: {selected_load_key.split('##')[0]}")
                 st.rerun()
 
+    # UUSI: turnaus haetaan jo tässä, ennen yläosan valikkoja - se valitaan
+    # samalla rivillä joukkueiden, kertoimien ja kartan kanssa (ks. alla), jotta
+    # sitä ei unohda merkitä vasta vedon kirjaushetkellä.
+    conn_t = sqlite3.connect('my_bets.db')
+    active_tournaments = pd.read_sql_query(
+        "SELECT name FROM tournaments WHERE status = 'Aktiivinen'", conn_t
+    )['name'].tolist()
+    conn_t.close()
+
     # Yläosan valikot ja kertoimet
-    c1, c2, c3, c4, c5 = st.columns([2, 1, 2, 1, 1])
+    c1, c2, c3, c4, c5, c6 = st.columns([2, 1, 2, 1, 1, 1.3])
     team1 = c1.selectbox("Joukkue 1:", team_names_list, index=None, key="team1_select")
     odds1 = c2.number_input(f"Kerroin (Joukkue 1)", min_value=1.01, value=1.85, step=0.01, key="odds1_input")
 
     team2 = c3.selectbox("Joukkue 2:", team_names_list, index=None, key="team2_select")
     odds2 = c4.number_input(f"Kerroin (Joukkue 2)", min_value=1.01, value=1.85, step=0.01, key="odds2_input")
 
-    # UUSI: kartta valitaan jo tässä, joukkueiden ja kertoimien yhteydessä - ei
-    # enää erikseen vetolomakkeella. Streamlit säilyttää valinnan (key=) yli
-    # koko sivun uudelleenajojen, joten sama arvo kulkee automaattisesti mukaan
-    # alempana "Kirjaa veto" -lomakkeeseen ilman että sitä tarvitsee muistaa
-    # vaihtaa erikseen ennen vedon tallennusta.
+    # UUSI: kartta ja turnaus valitaan jo tässä, joukkueiden ja kertoimien
+    # yhteydessä - ei enää erikseen vetolomakkeella. Streamlit säilyttää
+    # valinnan (key=) yli koko sivun uudelleenajojen, joten sama arvo kulkee
+    # automaattisesti mukaan alempana "Kirjaa veto" -lomakkeeseen ilman että
+    # sitä tarvitsee muistaa vaihtaa erikseen ennen vedon tallennusta.
     valittu_kartta = c5.selectbox("Kartta:", [f"Kartta {i}" for i in range(1, 6)], key="selected_map")
+    valittu_turnaus = c6.selectbox("Turnaus:", active_tournaments, key="bet_tournament")
 
     # PINNACLEN KIERROSTOTAL. Markkinan arvio kartan kestosta on parempi kuin
     # historiaan sovitettu malli: siinä on mukana kartta, kokoonpanot, LAN/online
@@ -345,11 +382,6 @@ with tab1:
         st.write("---")
         st.subheader("Kirjaa veto")
 
-        # Haetaan aktiiviset turnaukset tietokannasta
-        conn = sqlite3.connect('my_bets.db')
-        active_tournaments = pd.read_sql_query("SELECT name FROM tournaments WHERE status = 'Aktiivinen'", conn)['name'].tolist()
-        conn.close()
-
         player_names = list(sim_kills_lookup.keys())
 
         # HUOM: tämä osio EI ole enää st.form:in sisällä, koska Streamlit-formit
@@ -359,7 +391,10 @@ with tab1:
         valittu_pelaaja = c1.selectbox("Pelaaja:", player_names, key="bet_player")
         suunta = c2.radio("Suunta:", ["OVER", "UNDER"], horizontal=True, key="bet_direction")
         custom_line = c3.number_input("Raja (esim 14.5)", value=14.5, step=0.5, key="bet_line")
-        st.caption(f"🗺️ Kartta: **{valittu_kartta}** (valitaan yllä joukkuevalinnan yhteydessä)")
+        st.caption(
+            f"🗺️ Kartta: **{valittu_kartta}** · 🏆 Turnaus: **{valittu_turnaus}** "
+            f"(molemmat valitaan yllä joukkuevalinnan yhteydessä)"
+        )
 
         # KORJAUS 1 (ydinkorjaus): mallin arvio lasketaan AINA juuri sille linjalle
         # jonka käyttäjä syöttää tähän - ei mallin omalle auto-generoidulle linjalle.
@@ -376,11 +411,9 @@ with tab1:
                     f"→ mallin kerroinraja **{model_odds:.2f}**"
                 )
 
-        c4, c5, c6 = st.columns(3)
+        c4, c5 = st.columns(2)
         panos = c4.number_input("Panos (€)", min_value=1.0, value=10.0, step=1.0, key="bet_stake")
         kerroin = c5.number_input("Bookkerin kerroin", min_value=1.01, value=1.85, step=0.01, key="bet_odds")
-        # UUSI: Turnauksen valinta
-        valittu_turnaus = c6.selectbox("Turnaus", active_tournaments, key="bet_tournament")
 
         if model_odds:
             if kerroin > model_odds:
@@ -435,111 +468,112 @@ with tab2:
     subtab1, subtab2, subtab3 = st.tabs(["⚙️ Hallinta & Ratkaisu", "📊 Aktiiviset Turnaukset", "📚 Turnaushistoria & Kaikki"])
 
     with subtab1:
-        # 1. RATKAISE ODOTTAVAT VEDOT
-        st.subheader("Ratkaise odottavat vedot")
-        if not bets_df.empty:
-            pending_bets = bets_df[bets_df['status'] == 'Odottaa']
-            # UUSI: sama yläreunan hakukenttä suodattaa myös tämän listan, jotta
-            # yksittäisen vedon löytää ja ratkaisee helpommin isommastakin joukosta.
-            if search_query:
-                pending_bets = filter_bets(pending_bets, search_query)
-                if pending_bets.empty:
-                    st.caption(f"Ei odottavia vetoja haulla \"{search_query}\".")
-            for index, row in pending_bets.iterrows():
-                with st.form(f"resolve_{row['id']}"):
-                    st.write(f"**[{row['tournament']}]** {row['date'][:10]} | {row['description']} (Panos: {row['stake']}€ @ {row['odds']})")
-                    new_status = st.radio("Tulos:", ["Voitto", "Tappio", "Odottaa"], index=2, horizontal=True)
-                    if st.form_submit_button("Päivitä"):
-                        if new_status != "Odottaa":
-                            c = conn.cursor()
-                            c.execute("UPDATE bets SET status = ? WHERE id = ?", (new_status, row['id']))
-                            conn.commit()
-                            st.rerun()
+        # 1+2. AKTIIVISET VEDOT: pikaratkaisu ja muokkaus samassa kortissa
+        # UUSI: aiemmin nämä olivat kaksi erillistä osiota - yksi pelkkää
+        # ratkaisua varten (Voitto/Tappio-radio), toinen erillinen pudotus-
+        # valikollinen "Muokkaa aktiivisia vetoja" -osio kaikkien kenttien
+        # muokkaukseen. Nyt jokainen vireillä oleva veto näkyy omana korttinaan:
+        # pikanapit Voitto/Tappio suoraan kortissa, ja "✏️ Muokkaa"-avattavasta
+        # löytyy kaikkien kenttien muokkaus, poisto sekä cashout samasta
+        # paikasta - ei tarvitse etsiä vetoa uudelleen toisesta pudotusvalikosta.
+        st.subheader("Aktiiviset vedot")
 
-        st.write("---")
-
-        # 2. MUOKKAA AKTIIVISIA (VIREILLÄ OLEVIA) VETOJA
-        # UUSI: aiemmin vain ratkaistuja vetoja pystyi muokkaamaan jälkikäteen -
-        # vireillä olevan vedon ainoa muokkaus oli sen ratkaiseminen yllä. Tässä
-        # voi korjata KAIKKI kirjausvaiheen tiedot (turnaus, kartta, pelaaja,
-        # suunta, raja, panos, kerroin, joukkueet) ennen kuin veto ratkeaa -
-        # esim. jos näppäiliit väärän linjan tai valitsit väärän turnauksen.
-        st.subheader("Muokkaa aktiivisia vetoja")
-        active_bets_for_edit = bets_df[bets_df['status'] == 'Odottaa']
-        # HUOM: EI käytetä tab1:n "active_tournaments"-muuttujaa - se määritellään
-        # siellä vain jos käyttäjä on jo ajanut simulaation tällä istunnolla
-        # (session_state['sim_results']), joten se voi puuttua kokonaan kun tätä
-        # välilehteä käytetään. tournaments_df on sen sijaan ladattu heti tab2:n
-        # alussa (rivi 330) ja on siis aina käytettävissä täällä.
         edit_active_tournaments = tournaments_df[tournaments_df['status'] == 'Aktiivinen']['name'].tolist()
 
-        if not active_bets_for_edit.empty:
-            with st.expander("✏️ Etsi ja muokkaa vireillä olevaa vetoa", expanded=False):
-                # HUOM: avaimessa mukana vedon ID, ettei kaksi muuten identtisen
-                # näköistä vetoa (sama pelaaja/linja/päivä) sekoitu keskenään
-                # valikossa.
-                active_bet_dict = {
-                    f"[{row['tournament']}] {row['date'][:10]} | {row['description']} (ID: {row['id']})": row
-                    for _, row in active_bets_for_edit.iterrows()
-                }
+        active_bets_for_edit = bets_df[bets_df['status'] == 'Odottaa']
+        if search_query:
+            active_bets_for_edit = filter_bets(active_bets_for_edit, search_query)
 
-                selected_active_key = st.selectbox(
-                    "Valitse veto:", list(active_bet_dict.keys()), index=None,
-                    placeholder="Etsi muokattava veto...", key="active_bet_select"
-                )
+        if active_bets_for_edit.empty:
+            if search_query:
+                st.caption(f"Ei aktiivisia vetoja haulla \"{search_query}\".")
+            else:
+                st.caption("Ei aktiivisia vetoja.")
+        else:
+            for _, row in active_bets_for_edit.iterrows():
+                bid = row['id']
+                with st.container(border=True):
+                    st.markdown(
+                        f"**[{row['tournament']}]** {row['date'][:10]} | {row['description']}  \n"
+                        f"Panos: {row['stake']:.2f}€ @ {row['odds']:.2f}"
+                    )
 
-                if selected_active_key:
-                    abet = active_bet_dict[selected_active_key]
+                    qc1, qc2, qc3 = st.columns([1, 1, 4])
+                    if qc1.button("✅ Voitto", key=f"win_{bid}"):
+                        cur = conn.cursor()
+                        cur.execute("UPDATE bets SET status = ? WHERE id = ?", ("Voitto", bid))
+                        conn.commit()
+                        st.rerun()
+                    if qc2.button("❌ Tappio", key=f"lose_{bid}"):
+                        cur = conn.cursor()
+                        cur.execute("UPDATE bets SET status = ? WHERE id = ?", ("Tappio", bid))
+                        conn.commit()
+                        st.rerun()
 
-                    with st.form(f"edit_active_form_{abet['id']}"):
-                        st.caption(f"Muokataan vireillä olevaa vetoa (ID: {abet['id']})")
-
+                    with st.expander("✏️ Muokkaa"):
                         # HUOM: ennen tätä ominaisuutta tallennetuissa vedoissa
                         # player/direction/line/team1/team2 -sarakkeet voivat olla
                         # tyhjiä (NULL), koska ne olivat vain osa description-
                         # tekstiä. Käytetään silloin varovaisia oletusarvoja -
                         # tallennus täyttää sarakkeet oikein tästä eteenpäin.
-                        cur_player = abet['player'] if pd.notna(abet.get('player')) else ""
-                        cur_direction = abet['direction'] if pd.notna(abet.get('direction')) else "OVER"
-                        cur_line = float(abet['line']) if pd.notna(abet.get('line')) else 14.5
-                        cur_team1 = abet['team1'] if pd.notna(abet.get('team1')) else ""
-                        cur_team2 = abet['team2'] if pd.notna(abet.get('team2')) else ""
+                        cur_player = row['player'] if pd.notna(row.get('player')) else ""
+                        cur_direction = row['direction'] if pd.notna(row.get('direction')) else "OVER"
+                        cur_line = float(row['line']) if pd.notna(row.get('line')) else 14.5
+                        cur_team1 = row['team1'] if pd.notna(row.get('team1')) else ""
+                        cur_team2 = row['team2'] if pd.notna(row.get('team2')) else ""
 
-                        row1c1, row1c2, row1c3 = st.columns(3)
-                        new_a_tournament = row1c1.selectbox(
-                            "Turnaus", edit_active_tournaments,
-                            index=(edit_active_tournaments.index(abet['tournament'])
-                                   if abet['tournament'] in edit_active_tournaments else 0),
-                        )
-                        map_options = [f"Kartta {i}" for i in range(1, 6)]
-                        new_a_map = row1c2.selectbox(
-                            "Kartta", map_options,
-                            index=(map_options.index(abet['map']) if abet['map'] in map_options else 0),
-                        )
-                        new_a_player = row1c3.text_input("Pelaaja", value=cur_player)
+                        with st.form(f"edit_active_form_{bid}"):
+                            row1c1, row1c2, row1c3 = st.columns(3)
+                            new_a_tournament = row1c1.selectbox(
+                                "Turnaus", edit_active_tournaments,
+                                index=(edit_active_tournaments.index(row['tournament'])
+                                       if row['tournament'] in edit_active_tournaments else 0),
+                                key=f"a_tournament_{bid}",
+                            )
+                            map_options = [f"Kartta {i}" for i in range(1, 6)]
+                            new_a_map = row1c2.selectbox(
+                                "Kartta", map_options,
+                                index=(map_options.index(row['map']) if row['map'] in map_options else 0),
+                                key=f"a_map_{bid}",
+                            )
+                            new_a_player = row1c3.text_input("Pelaaja", value=cur_player, key=f"a_player_{bid}")
 
-                        row2c1, row2c2, row2c3 = st.columns(3)
-                        new_a_direction = row2c1.radio(
-                            "Suunta", ["OVER", "UNDER"],
-                            index=(0 if cur_direction == "OVER" else 1), horizontal=True,
-                        )
-                        new_a_line = row2c2.number_input("Raja (esim 14.5)", value=cur_line, step=0.5)
-                        new_a_stake = row2c3.number_input(
-                            "Panos (€)", min_value=1.0, value=float(abet['stake']), step=1.0
-                        )
+                            row2c1, row2c2, row2c3 = st.columns(3)
+                            new_a_direction = row2c1.radio(
+                                "Suunta", ["OVER", "UNDER"],
+                                index=(0 if cur_direction == "OVER" else 1), horizontal=True,
+                                key=f"a_direction_{bid}",
+                            )
+                            new_a_line = row2c2.number_input("Raja (esim 14.5)", value=cur_line, step=0.5,
+                                                              key=f"a_line_{bid}")
+                            new_a_stake = row2c3.number_input(
+                                "Panos (€)", min_value=1.0, value=float(row['stake']), step=1.0,
+                                key=f"a_stake_{bid}",
+                            )
 
-                        row3c1, row3c2, row3c3 = st.columns(3)
-                        new_a_odds = row3c1.number_input(
-                            "Kerroin", min_value=1.01, value=float(abet['odds']), step=0.01
-                        )
-                        new_a_team1 = row3c2.text_input("Joukkue 1", value=cur_team1)
-                        new_a_team2 = row3c3.text_input("Joukkue 2", value=cur_team2)
+                            row3c1, row3c2, row3c3 = st.columns(3)
+                            new_a_odds = row3c1.number_input(
+                                "Kerroin", min_value=1.01, value=float(row['odds']), step=0.01,
+                                key=f"a_odds_{bid}",
+                            )
+                            new_a_team1 = row3c2.text_input("Joukkue 1", value=cur_team1, key=f"a_team1_{bid}")
+                            new_a_team2 = row3c3.text_input("Joukkue 2", value=cur_team2, key=f"a_team2_{bid}")
 
-                        btn_a1, btn_a2 = st.columns(2)
-                        save_active_clicked = btn_a1.form_submit_button("Tallenna muutokset", type="primary")
-                        delete_active_clicked = btn_a2.form_submit_button("🗑️ Poista veto lopullisesti")
+                            st.caption(
+                                "💰 Cashout: syötä alle summa jonka bookkeri tarjoaa vedon "
+                                "sulkemisesta kesken ottelun, ja paina Cashout. Veto ratkeaa "
+                                "tuloksella (saatu summa − panos)."
+                            )
+                            cashout_amount = st.number_input(
+                                "Cashoutissa saatu summa (€)", min_value=0.0, value=0.0, step=1.0,
+                                key=f"a_cashout_{bid}",
+                            )
 
-                        if save_active_clicked:
+                            btn_a1, btn_a2, btn_a3 = st.columns(3)
+                            save_active_clicked = btn_a1.form_submit_button("💾 Tallenna", type="primary")
+                            cashout_clicked = btn_a2.form_submit_button("💰 Cashout")
+                            delete_active_clicked = btn_a3.form_submit_button("🗑️ Poista")
+
                             # description rakennetaan uudelleen samalla kaavalla kuin
                             # "Kirjaa veto" -lomakkeessa, jotta se pysyy yhtenäisenä
                             # muualla dashboardissa (haku, listaukset) käytetyn tekstin
@@ -548,24 +582,44 @@ with tab2:
                                 f"{new_a_player} {new_a_direction} {new_a_line} "
                                 f"({new_a_team1} vs {new_a_team2}, {new_a_map})"
                             )
-                            cur = conn.cursor()
-                            cur.execute(
-                                """UPDATE bets SET tournament = ?, map = ?, player = ?, direction = ?,
-                                       line = ?, stake = ?, odds = ?, team1 = ?, team2 = ?, description = ?
-                                   WHERE id = ?""",
-                                (new_a_tournament, new_a_map, new_a_player, new_a_direction, new_a_line,
-                                 new_a_stake, new_a_odds, new_a_team1, new_a_team2, new_desc, abet['id']),
-                            )
-                            conn.commit()
-                            st.success("Aktiivinen veto päivitetty!")
-                            st.rerun()
 
-                        if delete_active_clicked:
-                            cur = conn.cursor()
-                            cur.execute("DELETE FROM bets WHERE id = ?", (abet['id'],))
-                            conn.commit()
-                            st.warning("Veto poistettu!")
-                            st.rerun()
+                            if save_active_clicked:
+                                cur = conn.cursor()
+                                cur.execute(
+                                    """UPDATE bets SET tournament = ?, map = ?, player = ?, direction = ?,
+                                           line = ?, stake = ?, odds = ?, team1 = ?, team2 = ?, description = ?
+                                       WHERE id = ?""",
+                                    (new_a_tournament, new_a_map, new_a_player, new_a_direction, new_a_line,
+                                     new_a_stake, new_a_odds, new_a_team1, new_a_team2, new_desc, bid),
+                                )
+                                conn.commit()
+                                st.success("Veto päivitetty!")
+                                st.rerun()
+
+                            if cashout_clicked:
+                                cur = conn.cursor()
+                                cur.execute(
+                                    """UPDATE bets SET tournament = ?, map = ?, player = ?, direction = ?,
+                                           line = ?, stake = ?, odds = ?, team1 = ?, team2 = ?, description = ?,
+                                           status = ?, cashout_amount = ?
+                                       WHERE id = ?""",
+                                    (new_a_tournament, new_a_map, new_a_player, new_a_direction, new_a_line,
+                                     new_a_stake, new_a_odds, new_a_team1, new_a_team2, new_desc,
+                                     "Cashout", cashout_amount, bid),
+                                )
+                                conn.commit()
+                                st.success(
+                                    f"Cashoutattu {cashout_amount:.2f}€ "
+                                    f"(tuotto {cashout_amount - new_a_stake:+.2f}€)."
+                                )
+                                st.rerun()
+
+                            if delete_active_clicked:
+                                cur = conn.cursor()
+                                cur.execute("DELETE FROM bets WHERE id = ?", (bid,))
+                                conn.commit()
+                                st.warning("Veto poistettu!")
+                                st.rerun()
 
         st.write("---")
 
@@ -590,9 +644,15 @@ with tab2:
                         new_stake = c1.number_input("Panos (€)", min_value=1.0, value=float(bet['stake']), step=1.0)
                         new_odds = c2.number_input("Kerroin", min_value=1.01, value=float(bet['odds']), step=0.01)
 
-                        status_options = ["Voitto", "Tappio", "Odottaa"]
+                        status_options = ["Voitto", "Tappio", "Cashout", "Odottaa"]
                         current_status_idx = status_options.index(bet['status']) if bet['status'] in status_options else 0
                         new_status = c3.selectbox("Tulos", status_options, index=current_status_idx)
+
+                        cur_cashout = float(bet['cashout_amount']) if pd.notna(bet.get('cashout_amount')) else 0.0
+                        new_cashout_amount = st.number_input(
+                            "Cashoutissa saatu summa (€) — koskee vain jos Tulos = Cashout",
+                            min_value=0.0, value=cur_cashout, step=1.0,
+                        )
 
                         btn1, btn2 = st.columns(2)
                         save_clicked = btn1.form_submit_button("Tallenna muutokset", type="primary")
@@ -600,8 +660,9 @@ with tab2:
 
                         if save_clicked:
                             cur = conn.cursor()
-                            cur.execute("UPDATE bets SET stake = ?, odds = ?, status = ? WHERE id = ?",
-                                        (new_stake, new_odds, new_status, bet['id']))
+                            cur.execute(
+                                "UPDATE bets SET stake = ?, odds = ?, status = ?, cashout_amount = ? WHERE id = ?",
+                                (new_stake, new_odds, new_status, new_cashout_amount, bet['id']))
                             conn.commit()
                             st.success("Päivitetty!")
                             st.rerun()
@@ -653,7 +714,7 @@ with tab2:
             if not t_bets.empty:
                 # Laske kassan kehitys kronologisessa järjestyksessä
                 t_bets = t_bets.sort_values('id')
-                t_bets['Tuotto'] = t_bets.apply(lambda x: (x['stake'] * (x['odds'] - 1)) if x['status'] == 'Voitto' else (-x['stake'] if x['status'] == 'Tappio' else 0), axis=1)
+                t_bets['Tuotto'] = t_bets.apply(bet_profit, axis=1)
                 t_bets['Kassa (€)'] = t_bets['Tuotto'].cumsum()
 
                 # UUSI: ROI %, vetojen määrä ja tulos euroina graafin yläpuolella
@@ -676,7 +737,7 @@ with tab2:
 
             if not hist_bets.empty:
                 hist_bets = hist_bets.sort_values('id')
-                hist_bets['Tuotto'] = hist_bets.apply(lambda x: (x['stake'] * (x['odds'] - 1)) if x['status'] == 'Voitto' else (-x['stake'] if x['status'] == 'Tappio' else 0), axis=1)
+                hist_bets['Tuotto'] = hist_bets.apply(bet_profit, axis=1)
                 hist_bets['Kassa (€)'] = hist_bets['Tuotto'].cumsum()
 
                 # UUSI: ROI %, vetojen määrä ja tulos euroina graafin yläpuolella
@@ -716,7 +777,7 @@ with tab2:
         st.subheader("Kaikki vedot (All-time)")
         if not bets_df.empty:
             all_bets = bets_df.copy().sort_values('id')
-            all_bets['Tuotto'] = all_bets.apply(lambda x: (x['stake'] * (x['odds'] - 1)) if x['status'] == 'Voitto' else (-x['stake'] if x['status'] == 'Tappio' else 0), axis=1)
+            all_bets['Tuotto'] = all_bets.apply(bet_profit, axis=1)
             all_bets['Kassa (€)'] = all_bets['Tuotto'].cumsum()
 
             # UUSI: ROI %, vetojen määrä ja tulos euroina graafin yläpuolella
