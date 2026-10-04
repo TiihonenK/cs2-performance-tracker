@@ -639,17 +639,30 @@ with tab2:
 
                     with st.form(f"edit_form_{bet['id']}"):
                         st.caption(f"Muokataan vetoa (ID: {bet['id']})")
-                        c1, c2, c3 = st.columns(3)
 
+                        # UUSI: turnausta voi muokata myös jälkikäteen, ratkaistun
+                        # vedon kohdalla - esim. kun turnaus unohtui merkitä
+                        # oikein vedon kirjaushetkellä ja veto jäi "Yleinen"-
+                        # turnauksen alle. Lista sisältää KAIKKI turnaukset
+                        # (myös suljetut), koska veto voi kuulua jo historiaan
+                        # siirrettyyn turnaukseen.
+                        all_tournament_names = tournaments_df['name'].tolist()
+                        c0, c1, c2 = st.columns(3)
+                        new_tournament = c0.selectbox(
+                            "Turnaus", all_tournament_names,
+                            index=(all_tournament_names.index(bet['tournament'])
+                                   if bet['tournament'] in all_tournament_names else 0),
+                        )
                         new_stake = c1.number_input("Panos (€)", min_value=1.0, value=float(bet['stake']), step=1.0)
                         new_odds = c2.number_input("Kerroin", min_value=1.01, value=float(bet['odds']), step=0.01)
 
+                        c3, c4 = st.columns(2)
                         status_options = ["Voitto", "Tappio", "Cashout", "Odottaa"]
                         current_status_idx = status_options.index(bet['status']) if bet['status'] in status_options else 0
                         new_status = c3.selectbox("Tulos", status_options, index=current_status_idx)
 
                         cur_cashout = float(bet['cashout_amount']) if pd.notna(bet.get('cashout_amount')) else 0.0
-                        new_cashout_amount = st.number_input(
+                        new_cashout_amount = c4.number_input(
                             "Cashoutissa saatu summa (€) — koskee vain jos Tulos = Cashout",
                             min_value=0.0, value=cur_cashout, step=1.0,
                         )
@@ -661,8 +674,8 @@ with tab2:
                         if save_clicked:
                             cur = conn.cursor()
                             cur.execute(
-                                "UPDATE bets SET stake = ?, odds = ?, status = ?, cashout_amount = ? WHERE id = ?",
-                                (new_stake, new_odds, new_status, new_cashout_amount, bet['id']))
+                                "UPDATE bets SET tournament = ?, stake = ?, odds = ?, status = ?, cashout_amount = ? WHERE id = ?",
+                                (new_tournament, new_stake, new_odds, new_status, new_cashout_amount, bet['id']))
                             conn.commit()
                             st.success("Päivitetty!")
                             st.rerun()
@@ -704,6 +717,38 @@ with tab2:
                 c.execute("UPDATE tournaments SET status = 'Suljettu' WHERE name = ?", (close_t,))
                 conn.commit()
                 st.rerun()
+
+        st.write("---")
+
+        # 6. UUSI: POISTA TURNAUS KOKONAAN
+        # Toisin kuin "Sulje", tämä poistaa turnaus-rivin pysyvästi - tarkoitettu
+        # esim. oletusturnaukselle "Yleinen", jota ei enää tarvita sen jälkeen
+        # kun turnaus valitaan aina heti joukkuevalinnan yhteydessä (ei siis pitäisi
+        # jäädä unohdetuksi). Estetty jos turnaukseen on yhä merkitty vetoja -
+        # muuten niiden turnaus-tieto jäisi orvoksi/näkymättömäksi. Siirrä vedot
+        # ensin oikeaan turnaukseen yllä olevasta "Muokkaa tai poista ratkaistuja
+        # vetoja" -osiosta (tai aktiivisen vedon ✏️ Muokkaa-napista), niin poisto
+        # onnistuu.
+        st.subheader("Poista turnaus kokonaan")
+        all_tournament_names_del = tournaments_df['name'].tolist()
+        if all_tournament_names_del:
+            del_t = st.selectbox("Valitse poistettava turnaus", all_tournament_names_del,
+                                  key="del_tournament_select")
+            bets_in_t = int((bets_df['tournament'] == del_t).sum())
+            if bets_in_t > 0:
+                st.warning(
+                    f"⚠️ Turnaukseen '{del_t}' on merkitty {bets_in_t} vetoa - niitä ei voi "
+                    f"poistaa turnauksen mukana. Siirrä ne ensin oikeaan turnaukseen "
+                    f"yllä olevasta 'Muokkaa tai poista ratkaistuja vetoja' -osiosta "
+                    f"(tai aktiivisen vedon ✏️ Muokkaa-napista), niin poisto onnistuu."
+                )
+            else:
+                if st.button(f"🗑️ Poista '{del_t}' pysyvästi"):
+                    c = conn.cursor()
+                    c.execute("DELETE FROM tournaments WHERE name = ?", (del_t,))
+                    conn.commit()
+                    st.success(f"Turnaus '{del_t}' poistettu.")
+                    st.rerun()
 
     with subtab2:
         st.subheader("Aktiivisten turnausten seuranta")
