@@ -69,10 +69,22 @@ def init_betting_db():
     c.execute('''CREATE TABLE IF NOT EXISTS tournaments
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, status TEXT)''')
 
-    # Lisätään oletusturnaus, jos taulu on tyhjä
-    c.execute("SELECT COUNT(*) FROM tournaments")
-    if c.fetchone()[0] == 0:
-        c.execute("INSERT INTO tournaments (name, status) VALUES ('Yleinen', 'Aktiivinen')")
+    # UUSI: ei enää luoda "Yleinen"-oletusturnausta automaattisesti tyhjään
+    # kantaan - turnaus on PAKKO valita (ks. tab1: vedon voi tallentaa vain
+    # jos aktiivinen turnaus on valittuna), joten yleistä "roskakori"-turnausta
+    # ei enää tarvita uusille vedoille.
+    #
+    # Kertamigraatio: jos "Yleinen" on jo olemassa VANHASTA (ennen tätä
+    # muutosta kirjatuista vedoista), suljetaan se automaattisesti niin ettei
+    # se enää näy valittavana turnauksena uusille vedoille. Idempotentti -
+    # ei haittaa vaikka tämä ajetaan joka käynnistyksellä. Sille jo merkityt
+    # vanhat vedot säilyvät ennallaan ja ovat siirrettävissä oikeaan
+    # turnaukseen "Muokkaa tai poista ratkaistuja vetoja" -osiosta, ja koko
+    # turnauksen voi poistaa pysyvästi "Poista turnaus kokonaan" -napista
+    # sen jälkeen kun sille ei ole enää yhtään vetoa merkittynä.
+    c.execute(
+        "UPDATE tournaments SET status = 'Suljettu' WHERE name = 'Yleinen' AND status = 'Aktiivinen'"
+    )
 
     conn.commit()
     conn.close()
@@ -275,7 +287,17 @@ with tab1:
     # automaattisesti mukaan alempana "Kirjaa veto" -lomakkeeseen ilman että
     # sitä tarvitsee muistaa vaihtaa erikseen ennen vedon tallennusta.
     valittu_kartta = c5.selectbox("Kartta:", [f"Kartta {i}" for i in range(1, 6)], key="selected_map")
-    valittu_turnaus = c6.selectbox("Turnaus:", active_tournaments, key="bet_tournament")
+
+    # UUSI: turnaus on PAKKO valita - ei enää oletus-/roskakoriturnausta
+    # ("Yleinen") johon veto voisi vahingossa jäädä ilman turnausta. Jos
+    # aktiivisia turnauksia ei ole yhtään (esim. kaikki suljettu/poistettu),
+    # valikko näytetään poissa käytöstä eikä vetoa pääse tallentamaan ennen
+    # kuin uusi turnaus on luotu "📈 Vetoseuranta" -välilehdeltä.
+    if active_tournaments:
+        valittu_turnaus = c6.selectbox("Turnaus:", active_tournaments, key="bet_tournament")
+    else:
+        valittu_turnaus = None
+        c6.selectbox("Turnaus:", ["⚠️ Luo turnaus ensin"], disabled=True)
 
     # PINNACLEN KIERROSTOTAL. Markkinan arvio kartan kestosta on parempi kuin
     # historiaan sovitettu malli: siinä on mukana kartta, kokoonpanot, LAN/online
@@ -290,6 +312,12 @@ with tab1:
     total_under = t3c.number_input("Kerroin ALLE", min_value=0.0, value=0.0, step=0.01, key="total_under_input")
     if total_line > 0:
         st.caption("📡 Kierrosmäärä kalibroidaan Pinnaclen linjaan (ei mallin omaan arvioon).")
+    if not active_tournaments:
+        st.warning(
+            "⚠️ Ei yhtään aktiivista turnausta - vetoa ei voi tallentaa ennen kuin "
+            "olet luonut turnauksen '📈 Vetoseuranta' -välilehden 'Luo uusi turnaus' "
+            "-osiosta."
+        )
 
     if st.button("Laske arviot", type="primary") and team1 and team2 and team1 != team2:
         with st.spinner("Simuloidaan joukkueita..."):
@@ -392,7 +420,7 @@ with tab1:
         suunta = c2.radio("Suunta:", ["OVER", "UNDER"], horizontal=True, key="bet_direction")
         custom_line = c3.number_input("Raja (esim 14.5)", value=14.5, step=0.5, key="bet_line")
         st.caption(
-            f"🗺️ Kartta: **{valittu_kartta}** · 🏆 Turnaus: **{valittu_turnaus}** "
+            f"🗺️ Kartta: **{valittu_kartta}** · 🏆 Turnaus: **{valittu_turnaus or '⚠️ ei valittu'}** "
             f"(molemmat valitaan yllä joukkuevalinnan yhteydessä)"
         )
 
@@ -436,11 +464,18 @@ with tab1:
                 st.caption("Kelly: ei panosta — mallin mukaan negatiivinen odotusarvo.")
 
         if st.button("Tallenna veto", type="primary"):
-            desc = f"{valittu_pelaaja} {suunta} {custom_line} ({res['t1']} vs {res['t2']}, {valittu_kartta})"
-            save_bet("Tapot", desc, panos, kerroin, valittu_turnaus, valittu_kartta,
-                     model_prob=(model_p if model_odds else None),
-                     player=valittu_pelaaja, direction=suunta, line=custom_line,
-                     team1=res['t1'], team2=res['t2'])
+            if not valittu_turnaus:
+                st.error(
+                    "⚠️ Turnaus on pakko valita ennen vedon tallentamista - luo "
+                    "turnaus '📈 Vetoseuranta' -välilehdeltä ja yritä sen jälkeen "
+                    "uudelleen."
+                )
+            else:
+                desc = f"{valittu_pelaaja} {suunta} {custom_line} ({res['t1']} vs {res['t2']}, {valittu_kartta})"
+                save_bet("Tapot", desc, panos, kerroin, valittu_turnaus, valittu_kartta,
+                         model_prob=(model_p if model_odds else None),
+                         player=valittu_pelaaja, direction=suunta, line=custom_line,
+                         team1=res['t1'], team2=res['t2'])
 
 # ==========================================
 # VÄLILEHTI 2: VETOSEURANTA JA TURNAUKSET
