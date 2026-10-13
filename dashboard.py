@@ -93,8 +93,12 @@ def init_betting_db():
 # saatavilla) rakenteelliset pelaaja/suunta/raja/joukkue-kentät myöhempää
 # muokkausta varten - ks. init_betting_db():n kommentti näistä sarakkeista.
 def save_bet(bet_type, description, stake, odds, tournament, map_name, model_prob=None,
-             player=None, direction=None, line=None, team1=None, team2=None):
-    date_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+             player=None, direction=None, line=None, team1=None, team2=None, bet_date=None):
+    # UUSI: bet_date antaa kutsujan vahvistaa itse minkä päivän veto on (oletuksena
+    # tämä päivä, mutta jälkikäteen kirjattavalle vedolle voi valita toisen päivän -
+    # ks. tab1:n "Turnaus ja päivämäärä" -lohko). Jos sitä ei anneta, käyttäydytään
+    # kuten ennen (nykyhetki).
+    date_str = bet_date or datetime.now().strftime("%Y-%m-%d %H:%M")
     conn = sqlite3.connect('my_bets.db')
     c = conn.cursor()
     c.execute("""INSERT INTO bets (date, type, description, stake, odds, status, tournament, map,
@@ -264,40 +268,28 @@ with tab1:
                 st.success(f"✅ Kertoimet ladattu: {selected_load_key.split('##')[0]}")
                 st.rerun()
 
-    # UUSI: turnaus haetaan jo tässä, ennen yläosan valikkoja - se valitaan
-    # samalla rivillä joukkueiden, kertoimien ja kartan kanssa (ks. alla), jotta
-    # sitä ei unohda merkitä vasta vedon kirjaushetkellä.
+    # UUSI: turnauslista haetaan tässä valmiiksi (käytetään alempana sekä
+    # varoitusviestissä että itse turnaus+päivämäärä-lohkossa lomakkeen
+    # alareunassa - ks. "UUSI: turnaus ja päivämäärä" alla).
     conn_t = sqlite3.connect('my_bets.db')
     active_tournaments = pd.read_sql_query(
         "SELECT name FROM tournaments WHERE status = 'Aktiivinen'", conn_t
     )['name'].tolist()
     conn_t.close()
 
-    # Yläosan valikot ja kertoimet
-    c1, c2, c3, c4, c5, c6 = st.columns([2, 1, 2, 1, 1, 1.3])
+    # Yläosan valikot ja kertoimet - näitä TÄYTETÄÄN JSON:lla ("Lataa
+    # kertoimet" yllä), joten turnaus ja päivämäärä EIVÄT ole tässä joukossa:
+    # ne vahvistetaan aina erikseen käsin lomakkeen alareunassa (ks. alla),
+    # jotta ne eivät huku automaattisesti täyttyvien kenttien sekaan ja jää
+    # vahingossa vaihtamatta edellisestä kerrasta.
+    c1, c2, c3, c4, c5 = st.columns([2, 1, 2, 1, 1])
     team1 = c1.selectbox("Joukkue 1:", team_names_list, index=None, key="team1_select")
     odds1 = c2.number_input(f"Kerroin (Joukkue 1)", min_value=1.01, value=1.85, step=0.01, key="odds1_input")
 
     team2 = c3.selectbox("Joukkue 2:", team_names_list, index=None, key="team2_select")
     odds2 = c4.number_input(f"Kerroin (Joukkue 2)", min_value=1.01, value=1.85, step=0.01, key="odds2_input")
 
-    # UUSI: kartta ja turnaus valitaan jo tässä, joukkueiden ja kertoimien
-    # yhteydessä - ei enää erikseen vetolomakkeella. Streamlit säilyttää
-    # valinnan (key=) yli koko sivun uudelleenajojen, joten sama arvo kulkee
-    # automaattisesti mukaan alempana "Kirjaa veto" -lomakkeeseen ilman että
-    # sitä tarvitsee muistaa vaihtaa erikseen ennen vedon tallennusta.
     valittu_kartta = c5.selectbox("Kartta:", [f"Kartta {i}" for i in range(1, 6)], key="selected_map")
-
-    # UUSI: turnaus on PAKKO valita - ei enää oletus-/roskakoriturnausta
-    # ("Yleinen") johon veto voisi vahingossa jäädä ilman turnausta. Jos
-    # aktiivisia turnauksia ei ole yhtään (esim. kaikki suljettu/poistettu),
-    # valikko näytetään poissa käytöstä eikä vetoa pääse tallentamaan ennen
-    # kuin uusi turnaus on luotu "📈 Vetoseuranta" -välilehdeltä.
-    if active_tournaments:
-        valittu_turnaus = c6.selectbox("Turnaus:", active_tournaments, key="bet_tournament")
-    else:
-        valittu_turnaus = None
-        c6.selectbox("Turnaus:", ["⚠️ Luo turnaus ensin"], disabled=True)
 
     # PINNACLEN KIERROSTOTAL. Markkinan arvio kartan kestosta on parempi kuin
     # historiaan sovitettu malli: siinä on mukana kartta, kokoonpanot, LAN/online
@@ -312,12 +304,6 @@ with tab1:
     total_under = t3c.number_input("Kerroin ALLE", min_value=0.0, value=0.0, step=0.01, key="total_under_input")
     if total_line > 0:
         st.caption("📡 Kierrosmäärä kalibroidaan Pinnaclen linjaan (ei mallin omaan arvioon).")
-    if not active_tournaments:
-        st.warning(
-            "⚠️ Ei yhtään aktiivista turnausta - vetoa ei voi tallentaa ennen kuin "
-            "olet luonut turnauksen '📈 Vetoseuranta' -välilehden 'Luo uusi turnaus' "
-            "-osiosta."
-        )
 
     if st.button("Laske arviot", type="primary") and team1 and team2 and team1 != team2:
         with st.spinner("Simuloidaan joukkueita..."):
@@ -419,10 +405,7 @@ with tab1:
         valittu_pelaaja = c1.selectbox("Pelaaja:", player_names, key="bet_player")
         suunta = c2.radio("Suunta:", ["OVER", "UNDER"], horizontal=True, key="bet_direction")
         custom_line = c3.number_input("Raja (esim 14.5)", value=14.5, step=0.5, key="bet_line")
-        st.caption(
-            f"🗺️ Kartta: **{valittu_kartta}** · 🏆 Turnaus: **{valittu_turnaus or '⚠️ ei valittu'}** "
-            f"(molemmat valitaan yllä joukkuevalinnan yhteydessä)"
-        )
+        st.caption(f"🗺️ Kartta: **{valittu_kartta}**")
 
         # KORJAUS 1 (ydinkorjaus): mallin arvio lasketaan AINA juuri sille linjalle
         # jonka käyttäjä syöttää tähän - ei mallin omalle auto-generoidulle linjalle.
@@ -463,6 +446,35 @@ with tab1:
             else:
                 st.caption("Kelly: ei panosta — mallin mukaan negatiivinen odotusarvo.")
 
+        # UUSI: turnaus ja päivämäärä vahvistetaan AINA käsin tässä, aivan
+        # lomakkeen alareunassa, ERILLÄÄN kaikista yllä automaattisesti JSON:lla
+        # täytettävistä kentistä (joukkueet, kertoimet, kartta, total) - näin ne
+        # eivät huku autofill-kenttien sekaan ja jää vahingossa vaihtamatta
+        # edellisen vedon arvoista. Turnaus on PAKKO valita - ei enää oletus-/
+        # roskakoriturnausta ("Yleinen") johon veto voisi vahingossa jäädä ilman
+        # turnausta. Jos aktiivisia turnauksia ei ole yhtään (esim. kaikki
+        # suljettu/poistettu), valikko näytetään poissa käytöstä eikä vetoa
+        # pääse tallentamaan ennen kuin uusi turnaus on luotu "📈 Vetoseuranta"
+        # -välilehdeltä. Päivämäärä on oletuksena tämä päivä, mutta sen voi
+        # vaihtaa (esim. jälkikäteen kirjattava veto) - tätä käytetään
+        # "Aktiiviset turnaukset" -välilehden päiväkohtaisissa yhteenvetokorteissa.
+        st.write("---")
+        st.caption("🏆 Turnaus ja 📅 päivämäärä — vahvista aina itse:")
+        tc1, tc2 = st.columns(2)
+        if active_tournaments:
+            valittu_turnaus = tc1.selectbox("Turnaus:", active_tournaments, key="bet_tournament")
+        else:
+            valittu_turnaus = None
+            tc1.selectbox("Turnaus:", ["⚠️ Luo turnaus ensin"], disabled=True)
+        valittu_pvm = tc2.date_input("Päivämäärä:", value=datetime.now().date(), key="bet_date")
+
+        if not active_tournaments:
+            st.warning(
+                "⚠️ Ei yhtään aktiivista turnausta - vetoa ei voi tallentaa ennen kuin "
+                "olet luonut turnauksen '📈 Vetoseuranta' -välilehden 'Luo uusi turnaus' "
+                "-osiosta."
+            )
+
         if st.button("Tallenna veto", type="primary"):
             if not valittu_turnaus:
                 st.error(
@@ -472,10 +484,18 @@ with tab1:
                 )
             else:
                 desc = f"{valittu_pelaaja} {suunta} {custom_line} ({res['t1']} vs {res['t2']}, {valittu_kartta})"
+                # Jos valittu päivämäärä on tämä päivä, kirjataan myös tarkka
+                # kellonaika (kuten ennenkin) - muuten (jälkikäteen kirjattava
+                # veto) kellonajaksi laitetaan kiinteä 12:00, koska tarkkaa
+                # kellonaikaa ei silloin tiedetä.
+                if valittu_pvm == datetime.now().date():
+                    bet_date_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+                else:
+                    bet_date_str = valittu_pvm.strftime("%Y-%m-%d") + " 12:00"
                 save_bet("Tapot", desc, panos, kerroin, valittu_turnaus, valittu_kartta,
                          model_prob=(model_p if model_odds else None),
                          player=valittu_pelaaja, direction=suunta, line=custom_line,
-                         team1=res['t1'], team2=res['t2'])
+                         team1=res['t1'], team2=res['t2'], bet_date=bet_date_str)
 
 # ==========================================
 # VÄLILEHTI 2: VETOSEURANTA JA TURNAUKSET
@@ -805,6 +825,21 @@ with tab2:
 
                 # Näytetään taulukko (piilotetaan laskennalliset apusarakkeet)
                 st.dataframe(t_bets.drop(columns=['Tuotto', 'Kassa (€)']), width='stretch', hide_index=True)
+
+                # UUSI: päiväkohtaiset yhteenvetokortit - kullekin päivälle (vedon
+                # 'date'-kentän perusteella, josta otetaan vain YYYY-MM-DD-osa)
+                # omat ROI/tulos/vetomäärä-mittarit, uusin päivä ylimpänä. Näin
+                # näkee suoraan miten kukin päivä on mennyt, ei vain turnauksen
+                # kokonaistulosta.
+                st.write("---")
+                st.markdown("**Päivä kerrallaan**")
+                t_bets_pvm = t_bets.copy()
+                t_bets_pvm['pvm'] = t_bets_pvm['date'].str[:10]
+                for pvm in sorted(t_bets_pvm['pvm'].unique(), reverse=True):
+                    day_df = t_bets_pvm[t_bets_pvm['pvm'] == pvm]
+                    with st.container(border=True):
+                        st.markdown(f"**{pvm}**")
+                        show_bet_summary(day_df)
         else:
             st.info("Ei aktiivisia turnauksia.")
 
