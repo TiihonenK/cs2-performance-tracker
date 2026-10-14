@@ -520,7 +520,9 @@ with tab2:
         st.write("---")
 
     # Luodaan alivälilehdet navigoinnin helpottamiseksi
-    subtab1, subtab2, subtab3 = st.tabs(["⚙️ Hallinta & Ratkaisu", "📊 Aktiiviset Turnaukset", "📚 Turnaushistoria & Kaikki"])
+    subtab1, subtab2, subtab3, subtab4 = st.tabs(
+        ["⚙️ Hallinta & Ratkaisu", "📊 Aktiiviset Turnaukset", "📚 Turnaushistoria & Kaikki", "🎮 Pelaajat"]
+    )
 
     with subtab1:
         # 1+2. AKTIIVISET VEDOT: pikaratkaisu ja muokkaus samassa kortissa
@@ -576,9 +578,15 @@ with tab2:
                         cur_line = float(row['line']) if pd.notna(row.get('line')) else 14.5
                         cur_team1 = row['team1'] if pd.notna(row.get('team1')) else ""
                         cur_team2 = row['team2'] if pd.notna(row.get('team2')) else ""
+                        # UUSI: myös päivämäärää voi nyt muokata jälkikäteen (esim. jos
+                        # veto ehdittiin kirjata vasta seuraavana päivänä). Kellonaika
+                        # säilytetään alkuperäisenä - vain päivä vaihtuu - koska tarkkaa
+                        # uutta kellonaikaa ei yleensä tiedetä jälkikäteen.
+                        cur_date = pd.to_datetime(row['date']).date() if pd.notna(row.get('date')) else datetime.now().date()
+                        cur_time_str = str(row['date'])[11:16] if pd.notna(row.get('date')) and len(str(row['date'])) >= 16 else "12:00"
 
                         with st.form(f"edit_active_form_{bid}"):
-                            row1c1, row1c2, row1c3 = st.columns(3)
+                            row1c1, row1c2, row1c3, row1c4 = st.columns(4)
                             new_a_tournament = row1c1.selectbox(
                                 "Turnaus", edit_active_tournaments,
                                 index=(edit_active_tournaments.index(row['tournament'])
@@ -592,6 +600,7 @@ with tab2:
                                 key=f"a_map_{bid}",
                             )
                             new_a_player = row1c3.text_input("Pelaaja", value=cur_player, key=f"a_player_{bid}")
+                            new_a_date = row1c4.date_input("Päivämäärä", value=cur_date, key=f"a_date_{bid}")
 
                             row2c1, row2c2, row2c3 = st.columns(3)
                             new_a_direction = row2c1.radio(
@@ -637,15 +646,18 @@ with tab2:
                                 f"{new_a_player} {new_a_direction} {new_a_line} "
                                 f"({new_a_team1} vs {new_a_team2}, {new_a_map})"
                             )
+                            new_a_date_str = new_a_date.strftime("%Y-%m-%d") + " " + cur_time_str
 
                             if save_active_clicked:
                                 cur = conn.cursor()
                                 cur.execute(
                                     """UPDATE bets SET tournament = ?, map = ?, player = ?, direction = ?,
-                                           line = ?, stake = ?, odds = ?, team1 = ?, team2 = ?, description = ?
+                                           line = ?, stake = ?, odds = ?, team1 = ?, team2 = ?, description = ?,
+                                           date = ?
                                        WHERE id = ?""",
                                     (new_a_tournament, new_a_map, new_a_player, new_a_direction, new_a_line,
-                                     new_a_stake, new_a_odds, new_a_team1, new_a_team2, new_desc, bid),
+                                     new_a_stake, new_a_odds, new_a_team1, new_a_team2, new_desc,
+                                     new_a_date_str, bid),
                                 )
                                 conn.commit()
                                 st.success("Veto päivitetty!")
@@ -656,11 +668,11 @@ with tab2:
                                 cur.execute(
                                     """UPDATE bets SET tournament = ?, map = ?, player = ?, direction = ?,
                                            line = ?, stake = ?, odds = ?, team1 = ?, team2 = ?, description = ?,
-                                           status = ?, cashout_amount = ?
+                                           date = ?, status = ?, cashout_amount = ?
                                        WHERE id = ?""",
                                     (new_a_tournament, new_a_map, new_a_player, new_a_direction, new_a_line,
                                      new_a_stake, new_a_odds, new_a_team1, new_a_team2, new_desc,
-                                     "Cashout", cashout_amount, bid),
+                                     new_a_date_str, "Cashout", cashout_amount, bid),
                                 )
                                 conn.commit()
                                 st.success(
@@ -711,6 +723,13 @@ with tab2:
                         new_stake = c1.number_input("Panos (€)", min_value=1.0, value=float(bet['stake']), step=1.0)
                         new_odds = c2.number_input("Kerroin", min_value=1.01, value=float(bet['odds']), step=0.01)
 
+                        # UUSI: myös ratkaistun vedon päivämäärää voi muokata jälkikäteen
+                        # (esim. veto kirjattiin vasta seuraavana päivänä eikä sitä
+                        # huomattu silloin korjata). Kellonaika säilyy alkuperäisenä.
+                        cur_r_date = pd.to_datetime(bet['date']).date() if pd.notna(bet.get('date')) else datetime.now().date()
+                        cur_r_time_str = str(bet['date'])[11:16] if pd.notna(bet.get('date')) and len(str(bet['date'])) >= 16 else "12:00"
+                        new_r_date = st.date_input("Päivämäärä", value=cur_r_date, key=f"r_date_{bet['id']}")
+
                         c3, c4 = st.columns(2)
                         status_options = ["Voitto", "Tappio", "Cashout", "Odottaa"]
                         current_status_idx = status_options.index(bet['status']) if bet['status'] in status_options else 0
@@ -727,10 +746,11 @@ with tab2:
                         delete_clicked = btn2.form_submit_button("🗑️ Poista veto lopullisesti")
 
                         if save_clicked:
+                            new_r_date_str = new_r_date.strftime("%Y-%m-%d") + " " + cur_r_time_str
                             cur = conn.cursor()
                             cur.execute(
-                                "UPDATE bets SET tournament = ?, stake = ?, odds = ?, status = ?, cashout_amount = ? WHERE id = ?",
-                                (new_tournament, new_stake, new_odds, new_status, new_cashout_amount, bet['id']))
+                                "UPDATE bets SET tournament = ?, stake = ?, odds = ?, status = ?, cashout_amount = ?, date = ? WHERE id = ?",
+                                (new_tournament, new_stake, new_odds, new_status, new_cashout_amount, new_r_date_str, bet['id']))
                             conn.commit()
                             st.success("Päivitetty!")
                             st.rerun()
@@ -900,5 +920,61 @@ with tab2:
 
             st.line_chart(all_bets['Kassa (€)'].reset_index(drop=True))
             st.dataframe(all_bets.drop(columns=['Tuotto', 'Kassa (€)']), width='stretch', hide_index=True)
+
+    with subtab4:
+        # UUSI: pelaajakohtainen tilastointi. Käyttää 'player'/'direction'-sarakkeita,
+        # jotka tallentuvat automaattisesti uusista vedoista - vanhoissa (ennen tätä
+        # ominaisuutta kirjatuissa) vedoissa nämä voivat olla NULL, jolloin ne eivät
+        # näy tässä pelaajavalikossa, kunnes ne on kertaalleen muokattu "✏️ Muokkaa"
+        # tai "Etsi ja muokkaa vanhoja vetoja" -lomakkeella (ks. subtab1).
+        st.subheader("🎮 Pelaajakohtainen tilastointi")
+        players_list = sorted(bets_df['player'].dropna().unique().tolist()) if 'player' in bets_df.columns else []
+
+        if not players_list:
+            st.info(
+                "Ei vielä vetoja joihin pelaaja on tallennettu rakenteellisena kenttänä. "
+                "Vanhat vedot saa näkyviin tähän muokkaamalla ne kertaalleen (katso "
+                "'⚙️ Hallinta & Ratkaisu' -välilehti)."
+            )
+        else:
+            valittu_pelaaja_stat = st.selectbox("Valitse pelaaja:", players_list, key="player_stat_select")
+            p_bets = bets_df[bets_df['player'] == valittu_pelaaja_stat].copy()
+
+            # ROI %, vetoja yhteensä, tulos €, vireillä - sama yhteenveto kuin
+            # turnaus- ja päiväkorteissa.
+            show_bet_summary(p_bets)
+
+            # UNDER/OVER-jakauma ja kummankin suunnan oma voittoprosentti erikseen.
+            # Voittoprosentti lasketaan vain RATKAISTUISTA Voitto/Tappio-vedoista -
+            # Cashout jätetään pois, koska sen tulos ei ole yksiselitteisesti
+            # voitto tai tappio (ks. bet_profit-funktion kommentti).
+            dir_bets = p_bets[p_bets['direction'].isin(['OVER', 'UNDER'])]
+            total_dir = len(dir_bets)
+            under_df = p_bets[p_bets['direction'] == 'UNDER']
+            over_df = p_bets[p_bets['direction'] == 'OVER']
+            under_settled = under_df[under_df['status'].isin(['Voitto', 'Tappio'])]
+            over_settled = over_df[over_df['status'].isin(['Voitto', 'Tappio'])]
+
+            pct_under = (len(under_df) / total_dir * 100) if total_dir > 0 else 0.0
+            pct_over = (len(over_df) / total_dir * 100) if total_dir > 0 else 0.0
+            winrate_under = ((under_settled['status'] == 'Voitto').mean() * 100) if not under_settled.empty else 0.0
+            winrate_over = ((over_settled['status'] == 'Voitto').mean() * 100) if not over_settled.empty else 0.0
+
+            st.write("---")
+            dc1, dc2 = st.columns(2)
+            with dc1:
+                st.metric("UNDER-vetoja", f"{len(under_df)} ({pct_under:.0f} %)")
+                st.metric("UNDER voitto-%", f"{winrate_under:.1f} %",
+                          help=f"{len(under_settled)} ratkaistua UNDER-vetoa")
+            with dc2:
+                st.metric("OVER-vetoja", f"{len(over_df)} ({pct_over:.0f} %)")
+                st.metric("OVER voitto-%", f"{winrate_over:.1f} %",
+                          help=f"{len(over_settled)} ratkaistua OVER-vetoa")
+
+            st.write("---")
+            st.dataframe(
+                p_bets.sort_values('id', ascending=False),
+                width='stretch', hide_index=True,
+            )
 
     conn.close()
