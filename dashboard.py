@@ -9,6 +9,12 @@ from players_props import (
     get_team_players_overall_stats,
     simulate_team_kills,
     kills_probability_at_line,
+    devig_two_way,
+    get_team_kills_allowed,
+    kpr_corrections,
+    MAP_NAMES,
+    MAP_KILL_FACTORS,
+    OPP_ALLOWED_LEAGUE,
 )
 from match_simulator import simulate_match_context
 
@@ -37,9 +43,26 @@ def init_betting_db():
     # vedoista oikeasti 60 %) etkä laskea CLV:tä (voititko markkinan liikkeen).
     # Pelkkä voitto/tappio-historia vaatii satoja vetoja ennen kuin siitä näkee
     # mitään; kalibrointi ja CLV kertovat saman asian kymmenesosalla otoksesta.
-    for col, ddl in [("model_prob", "REAL"), ("closing_odds", "REAL")]:
+    for col, ddl in [("model_prob", "REAL"), ("opp_odds", "REAL"), ("map_pool", "TEXT")]:
         try:
             c.execute(f"ALTER TABLE bets ADD COLUMN {col} {ddl}")
+        except sqlite3.OperationalError:
+            pass
+
+    # UUSI: opp_odds = vastakkaisen puolen kerroin vedon hetkellä (esim. UNDER-
+    # vedolla saman linjan OVER-kerroin). Siitä saa marginaalin poistetun
+    # markkinatodennäköisyyden (devig_two_way) ja voi verrata ennustaako malli
+    # tuloksia paremmin kuin markkina itse. Korvaa aiemman closing_odds-sarakkeen,
+    # joka ei sovi kartta-/pelaajamarkkinoihin (linja liikkuu tai katoaa ennen
+    # kuin sulkeutumiskertoimen ehtii kirjata) eikä koskaan ollut käytössä.
+    #
+    # Kertamigraatio: poistetaan tyhjä closing_odds-sarake. Idempotentti -
+    # ajetaan vain jos sarake vielä on. DROP COLUMN vaatii SQLite >= 3.35; jos
+    # versio on vanhempi, sarake jää rauhaan (ei haittaa, sitä ei enää käytetä).
+    existing_cols = [r[1] for r in c.execute("PRAGMA table_info(bets)").fetchall()]
+    if "closing_odds" in existing_cols:
+        try:
+            c.execute("ALTER TABLE bets DROP COLUMN closing_odds")
         except sqlite3.OperationalError:
             pass
 
@@ -93,7 +116,8 @@ def init_betting_db():
 # saatavilla) rakenteelliset pelaaja/suunta/raja/joukkue-kentät myöhempää
 # muokkausta varten - ks. init_betting_db():n kommentti näistä sarakkeista.
 def save_bet(bet_type, description, stake, odds, tournament, map_name, model_prob=None,
-             player=None, direction=None, line=None, team1=None, team2=None, bet_date=None):
+             player=None, direction=None, line=None, team1=None, team2=None, bet_date=None,
+             opp_odds=None, map_pool=None):
     # UUSI: bet_date antaa kutsujan vahvistaa itse minkä päivän veto on (oletuksena
     # tämä päivä, mutta jälkikäteen kirjattavalle vedolle voi valita toisen päivän -
     # ks. tab1:n "Turnaus ja päivämäärä" -lohko). Jos sitä ei anneta, käyttäydytään
@@ -102,10 +126,10 @@ def save_bet(bet_type, description, stake, odds, tournament, map_name, model_pro
     conn = sqlite3.connect('my_bets.db')
     c = conn.cursor()
     c.execute("""INSERT INTO bets (date, type, description, stake, odds, status, tournament, map,
-                                    model_prob, player, direction, line, team1, team2)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                    model_prob, player, direction, line, team1, team2, opp_odds, map_pool)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
               (date_str, bet_type, description, stake, odds, "Odottaa", tournament, map_name,
-               model_prob, player, direction, line, team1, team2))
+               model_prob, player, direction, line, team1, team2, opp_odds, map_pool))
     conn.commit()
     conn.close()
     st.success(f"✅ Veto tallennettu turnaukseen: {tournament} ({map_name})!")
@@ -282,7 +306,7 @@ with tab1:
     # ne vahvistetaan aina erikseen käsin lomakkeen alareunassa (ks. alla),
     # jotta ne eivät huku automaattisesti täyttyvien kenttien sekaan ja jää
     # vahingossa vaihtamatta edellisestä kerrasta.
-    c1, c2, c3, c4, c5 = st.columns([2, 1, 2, 1, 1])
+    c1, c2, c3, c4, c5, c6 = st.columns([2, 1, 2, 1, 1, 1.3])
     team1 = c1.selectbox("Joukkue 1:", team_names_list, index=None, key="team1_select")
     odds1 = c2.number_input(f"Kerroin (Joukkue 1)", min_value=1.01, value=1.85, step=0.01, key="odds1_input")
 
@@ -290,6 +314,20 @@ with tab1:
     odds2 = c4.number_input(f"Kerroin (Joukkue 2)", min_value=1.01, value=1.85, step=0.01, key="odds2_input")
 
     valittu_kartta = c5.selectbox("Kartta:", [f"Kartta {i}" for i in range(1, 6)], key="selected_map")
+
+    # UUSI: kartan NIMI (Inferno, Dust2...). Malli käyttää yleistä karttakerrointa
+    # (sama kaikille pelaajille): esim. Infernolla tapot ovat ~2,5 % ja Dust2:lla
+    # ~1 % alle keskiarvon, Ancientilla ~1,6 % yli. Vaikuttaa tappoennusteeseen,
+    # joten valinta tehdään ENNEN "Laske arviot" -nappia. Valinta nollataan
+    # automaattisesti kun joukkueet tai kartan numero vaihtuvat, ettei edellisen
+    # ottelun kartta jää vahingossa voimaan.
+    NO_MAP = "(ei tiedossa)"
+    _map_ctx = (team1, team2, valittu_kartta)
+    if st.session_state.get("map_name_ctx") != _map_ctx:
+        st.session_state["map_name_select"] = NO_MAP
+        st.session_state["map_name_ctx"] = _map_ctx
+    valittu_mapname = c6.selectbox("Kartan nimi:", [NO_MAP] + MAP_NAMES, key="map_name_select")
+    map_for_model = None if valittu_mapname == NO_MAP else valittu_mapname
 
     # PINNACLEN KIERROSTOTAL. Markkinan arvio kartan kestosta on parempi kuin
     # historiaan sovitettu malli: siinä on mukana kartta, kokoonpanot, LAN/online
@@ -330,8 +368,15 @@ with tab1:
             t1_players = get_team_players_overall_stats(team1)
             t2_players = get_team_players_overall_stats(team2)
 
-            t1_sim = simulate_team_kills(t1_players, ctx['rounds'], ctx['share_t1'])
-            t2_sim = simulate_team_kills(t2_players, ctx['rounds'], ctx['share_t2'])
+            # UUSI: vastustajan "sallitut tapot" (kuinka paljon tappoja joukkue
+            # keskimäärin antaa vastustajalleen) + yleinen karttakerroin. Joukkue 1:n
+            # pelaajia korjataan Joukkue 2:n sallimilla tapoilla ja päinvastoin.
+            opp_allowed_t1, _n1 = get_team_kills_allowed(team2)   # t1:n vastustaja = team2
+            opp_allowed_t2, _n2 = get_team_kills_allowed(team1)
+            t1_sim = simulate_team_kills(t1_players, ctx['rounds'], ctx['share_t1'],
+                                         opp_allowed=opp_allowed_t1, map_name=map_for_model)
+            t2_sim = simulate_team_kills(t2_players, ctx['rounds'], ctx['share_t2'],
+                                         opp_allowed=opp_allowed_t2, map_name=map_for_model)
 
             st.session_state['sim_results'] = {
                 't1': team1, 't2': team2, 'p1': prob1, 'p2': prob2,
@@ -353,6 +398,8 @@ with tab1:
                 't1_rounds_won': float((ctx['rounds'] * ctx['share_t1']).mean()),
                 't2_rounds_won': float((ctx['rounds'] * ctx['share_t2']).mean()),
                 't1_data': t1_sim, 't2_data': t2_sim,
+                'map_name': map_for_model,
+                'opp_allowed_t1': opp_allowed_t1, 'opp_allowed_t2': opp_allowed_t2,
             }
 
     # Tulosten näyttäminen
@@ -375,11 +422,32 @@ with tab1:
             f"{res['t2']} {res['t2_rounds_won']:.1f}"
         )
 
+        # UUSI: näytetään mitkä korjaukset tappoennusteessa ovat käytössä, jotta
+        # lukujen taustan näkee (ja näkee jos jokin korjaus puuttuu).
+        _adj1, _mf = kpr_corrections(res.get('opp_allowed_t1'), res.get('map_name'))
+        _adj2, _ = kpr_corrections(res.get('opp_allowed_t2'), res.get('map_name'))
+        _map_txt = (f"**{res['map_name']}** (kerroin ×{_mf:.3f})" if res.get('map_name')
+                    else "**ei valittu** (ei karttakorjausta)")
+
+        def _opp_txt(team, val, adj):
+            if val is None:
+                return f"{team}: ei tarpeeksi dataa (ei korjausta)"
+            return f"{team} antaa {val:.2f} tappoa/kierros ({adj*21.6:+.2f} tappoa/kartta vastustajan pelaajille)"
+
+        st.caption(
+            f"🧮 Tappoennusteen korjaukset — kartta: {_map_txt} · vastustajan sallimat tapot "
+            f"(vertailutaso {OPP_ALLOWED_LEAGUE:.2f}): {_opp_txt(res['t2'], res.get('opp_allowed_t1'), _adj1)}; "
+            f"{_opp_txt(res['t1'], res.get('opp_allowed_t2'), _adj2)}"
+        )
+
         # Kootaan hakemisto pelaajan nimi -> raaka simulaatiotaulukko, jotta
         # sitä voidaan käyttää alempana mielivaltaisen (esim. bookkerin) linjan
         # todennäköisyyden laskemiseen.
         all_players_data = res['t1_data'] + res['t2_data']
         sim_kills_lookup = {p['Pelaaja']: p['_sim_kills'] for p in all_players_data}
+        # UUSI: mallin oma keskilinja per pelaaja (taulukon 'Mallin linja' -sarake).
+        # Käytetään raja-kentän SUUNTAA ANTAVANA oletusarvona, kun pelaaja vaihtuu.
+        model_line_lookup = {p['Pelaaja']: p['Mallin linja'] for p in all_players_data}
 
         # Näytetään Joukkue 1
         st.subheader(f"**{res['t1']}**")
@@ -404,8 +472,24 @@ with tab1:
         c1, c2, c3 = st.columns(3)
         valittu_pelaaja = c1.selectbox("Pelaaja:", player_names, key="bet_player")
         suunta = c2.radio("Suunta:", ["OVER", "UNDER"], horizontal=True, key="bet_direction")
-        custom_line = c3.number_input("Raja (esim 14.5)", value=14.5, step=0.5, key="bet_line")
-        st.caption(f"🗺️ Kartta: **{valittu_kartta}**")
+
+        # UUSI: kun pelaaja (tai simulaatio) vaihtuu, raja-kenttä asetetaan mallin
+        # omaan linjaan lähtöarvoksi, jotta sitä ei tarvitse etsiä käsin. Se on vain
+        # SUUNTAA ANTAVA oletus: kenttää voi yhä muuttaa vapaasti (bookkerin oikea
+        # linja on usein eri), eikä arvoa ylikirjoiteta uudelleen ennen kuin pelaaja
+        # tai simulaatio vaihtuu. Arvo pitää asettaa ENNEN number_input-widgetin
+        # luomista, muuten Streamlit ei salli session_staten muuttamista.
+        _line_ctx = f"{res['t1']}|{res['t2']}|{valittu_pelaaja}|{res['rounds']:.2f}"
+        mallin_linja = model_line_lookup.get(valittu_pelaaja)
+        if mallin_linja is not None and st.session_state.get("bet_line_ctx") != _line_ctx:
+            st.session_state["bet_line"] = float(mallin_linja)
+            st.session_state["bet_line_ctx"] = _line_ctx
+        st.session_state.setdefault("bet_line", 14.5)
+        custom_line = c3.number_input("Raja (esim 14.5)", step=0.5, key="bet_line")
+        st.caption(
+            f"🗺️ Kartta: **{valittu_kartta}** · 🎯 Mallin linja: **{mallin_linja}** "
+            f"(suuntaa antava lähtöarvo - muokkaa rajaa vapaasti bookkerin linjaan)"
+        )
 
         # KORJAUS 1 (ydinkorjaus): mallin arvio lasketaan AINA juuri sille linjalle
         # jonka käyttäjä syöttää tähän - ei mallin omalle auto-generoidulle linjalle.
@@ -422,9 +506,26 @@ with tab1:
                     f"→ mallin kerroinraja **{model_odds:.2f}**"
                 )
 
-        c4, c5 = st.columns(2)
+        c4, c5, c6 = st.columns(3)
         panos = c4.number_input("Panos (€)", min_value=1.0, value=10.0, step=1.0, key="bet_stake")
         kerroin = c5.number_input("Bookkerin kerroin", min_value=1.01, value=1.85, step=0.01, key="bet_odds")
+        # UUSI: vastakkaisen puolen kerroin samalta linjalta (OVER-vedolla UNDER-
+        # kerroin ja päinvastoin). Valinnainen: 0 = ei kirjata. Siitä lasketaan
+        # marginaalin poistettu markkinatodennäköisyys vedon hetkellä, jota
+        # verrataan malliin ja toteumaan Vetoseurannan "Malli vs markkina" -osiossa.
+        vastakerroin_raw = c6.number_input(
+            "Vastakkaisen puolen kerroin (0 = ei kirjata)", min_value=0.0, value=0.0, step=0.01,
+            key="bet_opp_odds",
+            help="Saman linjan toisen puolen kerroin (OVER-vedolla UNDER ja päinvastoin). "
+                 "Käytetään markkinan oman arvion laskemiseen marginaali poistettuna.",
+        )
+        vastakerroin = vastakerroin_raw if vastakerroin_raw > 1.0 else None
+        if vastakerroin and model_odds:
+            fair_self, _fair_opp, _marg = devig_two_way(kerroin, vastakerroin)
+            st.caption(
+                f"📏 Markkina (marginaali {_marg:.1f} % poistettu): **{fair_self*100:.1f} %** "
+                f"vs. malli **{model_p*100:.1f} %** ({model_p*100 - fair_self*100:+.1f} %-yks.)"
+            )
 
         if model_odds:
             if kerroin > model_odds:
@@ -495,7 +596,8 @@ with tab1:
                 save_bet("Tapot", desc, panos, kerroin, valittu_turnaus, valittu_kartta,
                          model_prob=(model_p if model_odds else None),
                          player=valittu_pelaaja, direction=suunta, line=custom_line,
-                         team1=res['t1'], team2=res['t2'], bet_date=bet_date_str)
+                         team1=res['t1'], team2=res['t2'], bet_date=bet_date_str,
+                         opp_odds=vastakerroin, map_pool=res.get('map_name'))
 
 # ==========================================
 # VÄLILEHTI 2: VETOSEURANTA JA TURNAUKSET
@@ -623,6 +725,18 @@ with tab2:
                             new_a_team1 = row3c2.text_input("Joukkue 1", value=cur_team1, key=f"a_team1_{bid}")
                             new_a_team2 = row3c3.text_input("Joukkue 2", value=cur_team2, key=f"a_team2_{bid}")
 
+                            cur_opp = float(row['opp_odds']) if pd.notna(row.get('opp_odds')) else 0.0
+                            oc1, oc2 = st.columns(2)
+                            new_a_opp_raw = oc1.number_input(
+                                "Vastakkaisen puolen kerroin (0 = ei kirjattu)", min_value=0.0,
+                                value=cur_opp, step=0.01, key=f"a_opp_{bid}",
+                            )
+                            _mp_opts = ["(ei tiedossa)"] + MAP_NAMES
+                            _cur_mp = row['map_pool'] if pd.notna(row.get('map_pool')) and row['map_pool'] in MAP_NAMES else "(ei tiedossa)"
+                            new_a_mappool_sel = oc2.selectbox(
+                                "Kartan nimi", _mp_opts, index=_mp_opts.index(_cur_mp), key=f"a_mappool_{bid}",
+                            )
+
                             st.caption(
                                 "💰 Cashout: syötä alle summa jonka bookkeri tarjoaa vedon "
                                 "sulkemisesta kesken ottelun, ja paina Cashout. Veto ratkeaa "
@@ -647,17 +761,19 @@ with tab2:
                                 f"({new_a_team1} vs {new_a_team2}, {new_a_map})"
                             )
                             new_a_date_str = new_a_date.strftime("%Y-%m-%d") + " " + cur_time_str
+                            new_a_opp = new_a_opp_raw if new_a_opp_raw > 1.0 else None
+                            new_a_mappool = None if new_a_mappool_sel == "(ei tiedossa)" else new_a_mappool_sel
 
                             if save_active_clicked:
                                 cur = conn.cursor()
                                 cur.execute(
                                     """UPDATE bets SET tournament = ?, map = ?, player = ?, direction = ?,
                                            line = ?, stake = ?, odds = ?, team1 = ?, team2 = ?, description = ?,
-                                           date = ?
+                                           date = ?, opp_odds = ?, map_pool = ?
                                        WHERE id = ?""",
                                     (new_a_tournament, new_a_map, new_a_player, new_a_direction, new_a_line,
                                      new_a_stake, new_a_odds, new_a_team1, new_a_team2, new_desc,
-                                     new_a_date_str, bid),
+                                     new_a_date_str, new_a_opp, new_a_mappool, bid),
                                 )
                                 conn.commit()
                                 st.success("Veto päivitetty!")
@@ -668,11 +784,11 @@ with tab2:
                                 cur.execute(
                                     """UPDATE bets SET tournament = ?, map = ?, player = ?, direction = ?,
                                            line = ?, stake = ?, odds = ?, team1 = ?, team2 = ?, description = ?,
-                                           date = ?, status = ?, cashout_amount = ?
+                                           date = ?, opp_odds = ?, map_pool = ?, status = ?, cashout_amount = ?
                                        WHERE id = ?""",
                                     (new_a_tournament, new_a_map, new_a_player, new_a_direction, new_a_line,
                                      new_a_stake, new_a_odds, new_a_team1, new_a_team2, new_desc,
-                                     new_a_date_str, "Cashout", cashout_amount, bid),
+                                     new_a_date_str, new_a_opp, new_a_mappool, "Cashout", cashout_amount, bid),
                                 )
                                 conn.commit()
                                 st.success(
@@ -728,7 +844,13 @@ with tab2:
                         # huomattu silloin korjata). Kellonaika säilyy alkuperäisenä.
                         cur_r_date = pd.to_datetime(bet['date']).date() if pd.notna(bet.get('date')) else datetime.now().date()
                         cur_r_time_str = str(bet['date'])[11:16] if pd.notna(bet.get('date')) and len(str(bet['date'])) >= 16 else "12:00"
-                        new_r_date = st.date_input("Päivämäärä", value=cur_r_date, key=f"r_date_{bet['id']}")
+                        rd1, rd2 = st.columns(2)
+                        new_r_date = rd1.date_input("Päivämäärä", value=cur_r_date, key=f"r_date_{bet['id']}")
+                        cur_r_opp = float(bet['opp_odds']) if pd.notna(bet.get('opp_odds')) else 0.0
+                        new_r_opp_raw = rd2.number_input(
+                            "Vastakkaisen puolen kerroin (0 = ei kirjattu)", min_value=0.0,
+                            value=cur_r_opp, step=0.01, key=f"r_opp_{bet['id']}",
+                        )
 
                         c3, c4 = st.columns(2)
                         status_options = ["Voitto", "Tappio", "Cashout", "Odottaa"]
@@ -747,10 +869,11 @@ with tab2:
 
                         if save_clicked:
                             new_r_date_str = new_r_date.strftime("%Y-%m-%d") + " " + cur_r_time_str
+                            new_r_opp = new_r_opp_raw if new_r_opp_raw > 1.0 else None
                             cur = conn.cursor()
                             cur.execute(
-                                "UPDATE bets SET tournament = ?, stake = ?, odds = ?, status = ?, cashout_amount = ?, date = ? WHERE id = ?",
-                                (new_tournament, new_stake, new_odds, new_status, new_cashout_amount, new_r_date_str, bet['id']))
+                                "UPDATE bets SET tournament = ?, stake = ?, odds = ?, status = ?, cashout_amount = ?, date = ?, opp_odds = ? WHERE id = ?",
+                                (new_tournament, new_stake, new_odds, new_status, new_cashout_amount, new_r_date_str, new_r_opp, bet['id']))
                             conn.commit()
                             st.success("Päivitetty!")
                             st.rerun()
@@ -907,6 +1030,108 @@ with tab2:
                        "Alle ~50 vedolla luvut heiluvat vielä paljon.")
         else:
             st.info("Ei vielä ratkaistuja vetoja joissa mallin arvio olisi tallessa.")
+
+        # UUSI: kalibrointi OVER/UNDER-suunnittain, valittavalla aikavälillä. Koko
+        # historian keskiarvo peittää helposti sen että malli on ajautunut vain
+        # toiselle suunnalle (esim. OVER yliarvioitu) tai vain viime aikoina.
+        st.write("---")
+        st.subheader("🎯 Kalibrointi suunnittain (OVER / UNDER)")
+        cal_range = st.radio(
+            "Aikaväli:", ["Kaikki", "Viimeiset 300", "Viimeiset 150"],
+            horizontal=True, key="cal_dir_range",
+        )
+        cal_d = bets_df[bets_df['status'].isin(['Voitto', 'Tappio'])].copy() if not bets_df.empty else pd.DataFrame()
+        if not cal_d.empty:
+            cal_d = cal_d[cal_d['model_prob'].notna() & cal_d['direction'].isin(['OVER', 'UNDER'])]
+        if not cal_d.empty:
+            cal_d = cal_d.sort_values('id')
+            if cal_range == "Viimeiset 300":
+                cal_d = cal_d.iloc[-300:]
+            elif cal_range == "Viimeiset 150":
+                cal_d = cal_d.iloc[-150:]
+            cal_d['osui'] = (cal_d['status'] == 'Voitto').astype(int)
+            cal_d['tuotto'] = cal_d.apply(bet_profit, axis=1)
+
+            rows = []
+            for dname in ['UNDER', 'OVER']:
+                sub = cal_d[cal_d['direction'] == dname]
+                if sub.empty:
+                    continue
+                rows.append({
+                    'Suunta': dname, 'Todennäköisyyskori': 'YHTEENSÄ', 'Vetoja': len(sub),
+                    'Mallin arvio': f"{sub['model_prob'].mean()*100:.1f} %",
+                    'Toteutunut': f"{sub['osui'].mean()*100:.1f} %",
+                    'Ero (%-yks.)': f"{(sub['osui'].mean() - sub['model_prob'].mean())*100:+.1f}",
+                    'ROI %': f"{sub['tuotto'].sum() / sub['stake'].sum() * 100:+.1f}",
+                })
+                sub = sub.assign(kori=pd.cut(sub['model_prob'], [0, .5, .55, .6, .65, .7, 1.0]))
+                for kori, g in sub.groupby('kori', observed=True):
+                    rows.append({
+                        'Suunta': dname, 'Todennäköisyyskori': str(kori), 'Vetoja': len(g),
+                        'Mallin arvio': f"{g['model_prob'].mean()*100:.1f} %",
+                        'Toteutunut': f"{g['osui'].mean()*100:.1f} %",
+                        'Ero (%-yks.)': f"{(g['osui'].mean() - g['model_prob'].mean())*100:+.1f}",
+                        'ROI %': f"{g['tuotto'].sum() / g['stake'].sum() * 100:+.1f}",
+                    })
+            st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
+            st.caption(
+                "Ero = toteutunut − mallin arvio. Selvästi negatiivinen ero tarkoittaa että "
+                "malli yliarvioi kyseisen suunnan todennäköisyydet. Alle ~50 vedon koreissa "
+                "luvut heiluvat paljon, ja samaan otteluun kasautuneet vedot korreloivat "
+                "keskenään, joten pieniä eroja ei kannata tulkita."
+            )
+        else:
+            st.info("Ei vielä ratkaistuja vetoja joissa on sekä mallin arvio että suunta tallessa.")
+
+        # UUSI: malli vs markkina. Vaatii vedot joille vastakkaisen puolen kerroin
+        # on kirjattu (opp_odds) - markkinatodennäköisyys lasketaan siitä marginaali
+        # poistettuna vedon hetkellä. Korvaa closing odds -vertailun, joka ei sovi
+        # kartta-/pelaajamarkkinoihin (linja liikkuu tai katoaa ennen sulkeutumista).
+        st.write("---")
+        st.subheader("📏 Malli vs markkina")
+        st.caption(
+            "Ennustaako malli tuloksia paremmin kuin markkina itse? Markkinan arvio = "
+            "bookkerin kertoimet marginaali poistettuna vedon hetkellä (vaatii vastakkaisen "
+            "puolen kertoimen kirjaamisen). Pienempi Brier-luku on parempi."
+        )
+        mm = bets_df[bets_df['status'].isin(['Voitto', 'Tappio'])].copy() if not bets_df.empty else pd.DataFrame()
+        if not mm.empty:
+            mm = mm[mm['model_prob'].notna() & mm['opp_odds'].notna() & (mm['opp_odds'] > 1.0)]
+        if mm.empty:
+            st.info("Ei vielä ratkaistuja vetoja joissa vastakkaisen puolen kerroin olisi kirjattu.")
+        else:
+            mm['markkina_p'] = (1 / mm['odds']) / ((1 / mm['odds']) + (1 / mm['opp_odds']))
+            mm['osui'] = (mm['status'] == 'Voitto').astype(int)
+            mm['tuotto'] = mm.apply(bet_profit, axis=1)
+            brier_model = ((mm['model_prob'] - mm['osui']) ** 2).mean()
+            brier_market = ((mm['markkina_p'] - mm['osui']) ** 2).mean()
+
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Vetoja", f"{len(mm)}")
+            m2.metric("Brier: malli", f"{brier_model:.4f}")
+            m3.metric("Brier: markkina", f"{brier_market:.4f}",
+                      delta=f"{(brier_market - brier_model):+.4f}", delta_color="off",
+                      help="Positiivinen = malli ennusti paremmin kuin markkina")
+            m4.metric("Toteutunut voitto-%", f"{mm['osui'].mean()*100:.1f} %",
+                      help=f"Malli keskim. {mm['model_prob'].mean()*100:.1f} %, markkina {mm['markkina_p'].mean()*100:.1f} %")
+
+            mm['ero'] = (mm['model_prob'] - mm['markkina_p']) * 100
+            mm['ryhma'] = pd.cut(mm['ero'], [-100, -3, 3, 100],
+                                 labels=['Malli alle markkinan (< -3 %-yks.)', 'Samaa luokkaa (±3 %-yks.)',
+                                         'Malli yli markkinan (> +3 %-yks.)'])
+            grp = mm.groupby('ryhma', observed=True).agg(
+                Vetoja=('osui', 'size'),
+                Mallin_arvio=('model_prob', lambda x: f"{x.mean()*100:.1f} %"),
+                Markkina=('markkina_p', lambda x: f"{x.mean()*100:.1f} %"),
+                Toteutunut=('osui', lambda x: f"{x.mean()*100:.1f} %"),
+            ).reset_index()
+            sums = mm.groupby('ryhma', observed=True)[['tuotto', 'stake']].sum()
+            roi_by = (sums['tuotto'] / sums['stake'] * 100).map(lambda v: f"{v:+.1f}")
+            grp['ROI %'] = grp['ryhma'].map(roi_by)
+            st.dataframe(grp.rename(columns={'ryhma': 'Mallin ero markkinaan'}),
+                         width='stretch', hide_index=True)
+            if len(mm) < 100:
+                st.caption("⚠️ Alle 100 vetoa - tulokset ovat vasta suuntaa antavia.")
 
         st.write("---")
         st.subheader("Kaikki vedot (All-time)")

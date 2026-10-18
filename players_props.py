@@ -50,6 +50,56 @@ def sample_match_lengths(win_prob, num_simulations=10000, **kwargs):
 HALF_LIFE_DAYS = 150
 
 
+# ============================================================================
+# KALIBROINTIVAKIOT (sovitettu taaksepäintestillä - ks. backtest_kills.py)
+# ============================================================================
+# Sovitettu 37 881 pelaaja-karttaan (tammi-elokuu 2026). Out-of-sample-testissä
+# (sovitus ensimmäiseen 55 %:iin, testi viimeiseen 45 %:iin) uusi putki osui
+# UNDER-todennäköisyyksissä toteumaan kaikilla linjoilla 10,5-19,5, kun vanha
+# oli joka linjalla ~2 %-yks. liian matalalla (malli yliarvioi tapot), ja Brier
+# parani -0,0010 +- 0,0004. Aja backtest_kills.py uudestaan kun kantaan on
+# kertynyt reilusti lisää otteluita ja päivitä vakiot sen tulosteesta.
+
+# Kohta 5: muotopaino 0,3 -> 0,1. 30 pv:n KPR perustuu vain muutamaan karttaan
+# ja on kohinaa: paino 0,3 HEIKENSI ulkopuolista ennustetta (virhe 417,5 vs. 415,9
+# ilman muotoa). Samalla se selittää osan kalibrointikulmakertoimen 0,85:stä -
+# kun paino laskee, kulmakerroin nousee ~0,96:een.
+FORM_WEIGHT = 0.1
+
+# Kohta 2: KPR:n kalibrointi  kpr_kal = a + b * kpr.  b < 1 tarkoittaa, että
+# äärimmäiset ennusteet (tähdet) regressoivat keskiarvoon: huipputason malli
+# yliarvioi, alimman tason aliarvioi.
+KPR_CAL_INTERCEPT = 0.0215
+KPR_CAL_SLOPE = 0.9646
+
+# Kohta 1: vastustajan "sallitut tapot" (joukkueen viimeisten 25 kartan
+# vastustajien tappoja/kierros, vähintään 8 karttaa). Vaikutus on tilastollisesti
+# merkitsevä (t ~ 6) senkin jälkeen kun voimaero on huomioitu: yksi keskihajonta
+# (0,16 joukkue-KPR) on ~0,33 tappoa/pelaaja/kartta. Läpivienti on ~7 % eli
+# KPR += OPP_ALLOWED_PASS * (vastustajan_sallimat - OPP_ALLOWED_LEAGUE).
+# OPP_ALLOWED_LEAGUE on sovitusaineiston OMA keskiarvo (kannan joukkueille), ei
+# koko liigan tappokeskiarvo, jotta korjaus on keskimäärin nolla.
+OPP_ALLOWED_PASS = 0.0690
+OPP_ALLOWED_LEAGUE = 3.2341
+OPP_ALLOWED_CLIP = 0.04          # suurin sallittu KPR-korjaus suuntaansa
+OPP_WINDOW, OPP_MIN_MAPS = 25, 8
+
+# Kohta 3: tasokerroin. KPR kalibroidaan kierros-kohtaisena keskiarvona mutta
+# ennuste kerrotaan kierroksilla (kierrosmäärä korreloi KPR:n kanssa), joten
+# putken keskimääräinen tappoennuste oli ~1,3 % liian korkea.
+LEVEL_ADJ = 0.9878
+
+# Kohta 4: YLEINEN karttakerroin (sama kaikille pelaajille). Pelaajakohtaista
+# versiota testattiin eikä siinä ollut käyttökelpoista signaalia (out-of-sample
+# kulmakerroin 0,08 ~ kohinaa), joten sellaista ei ole. Kartta saa oman kertoimen
+# vain jos otosta oli yli 300 karttaa; "Muu"/tuntematon = 1,0.
+MAP_KILL_FACTORS = {'Ancient': 1.0127, 'Anubis': 1.0012, 'Cache': 1.0033, 'Dust2': 0.9856,
+                    'Inferno': 0.9713, 'Mirage': 1.0035, 'Nuke': 1.0104, 'Overpass': 0.9925,
+                    'Train': 1.0}
+# Valittavissa dashboardin kartta-valikossa (aktiivinen karttapooli)
+MAP_NAMES = ['Ancient', 'Anubis', 'Dust2', 'Inferno', 'Mirage', 'Nuke', 'Overpass']
+
+
 def devig_two_way(odds_a, odds_b):
     """Poistaa marginaalin kaksipuolisesta markkinasta ja palauttaa
     (fair_p_a, fair_p_b, marginaali_prosentteina).
@@ -95,6 +145,58 @@ def line_edge_table(sim_kills, book_lines):
             row['EV under'] = f"{(p_under*o_under-1)*100:+.1f}%" if o_under and o_under > 1 else "-"
         rows.append(row)
     return rows
+
+
+def get_team_kills_allowed(team_name, window=OPP_WINDOW, min_maps=OPP_MIN_MAPS):
+    """Joukkueen viimeisten `window` kartan SALLITUT TAPOT: vastustajien tappoja
+    per kierros (5 pelaajan summa) niissä kartoissa joita tämä joukkue pelasi.
+
+    Palauttaa (arvo, karttojen_määrä). Arvo on None jos kartta-otos on alle
+    `min_maps` (silloin korjausta ei käytetä). Vertailutaso on OPP_ALLOWED_LEAGUE
+    (~3,23 tappoa/kierros); korkeampi arvo = joukkue antaa vastustajille paljon
+    tappoja.
+
+    Sama määritelmä kuin backtest_kills.py:ssä, jotta vakiot pätevät tähän."""
+    conn = sqlite3.connect('hltv_data.db')
+    try:
+        row = conn.execute("SELECT id FROM teams WHERE name = ?", (team_name,)).fetchone()
+        if not row:
+            return None, 0
+        tid = row[0]
+        df = pd.read_sql_query(
+            """SELECT s.match_id, p.team_id AS opp_team, SUM(s.kills) AS tk, COUNT(*) AS n,
+                      m.score_team1 + m.score_team2 AS rounds, m.match_date
+               FROM player_stats s
+               JOIN players p ON p.id = s.player_id
+               JOIN matches m ON m.id = s.match_id
+               WHERE (m.team1_id = ? OR m.team2_id = ?)
+                 AND p.team_id IN (m.team1_id, m.team2_id)
+                 AND p.team_id != ?
+                 AND m.match_date > '2020'
+               GROUP BY s.match_id, p.team_id""",
+            conn, params=(tid, tid, tid))
+    finally:
+        conn.close()
+
+    df = df[(df['n'] == 5) & (df['rounds'] >= 13)]
+    if len(df) < min_maps:
+        return None, len(df)
+    df = df.sort_values('match_date', ascending=False).head(window)
+    if len(df) < min_maps:
+        return None, len(df)
+    return float((df['tk'] / df['rounds']).mean()), int(len(df))
+
+
+def kpr_corrections(opp_allowed=None, map_name=None):
+    """Palauttaa (kpr_lisäys_vastustajasta, karttakerroin) - sama logiikka
+    kerran, jotta dashboard voi näyttää käytetyt korjaukset samoilla luvuilla
+    kuin simulaatio."""
+    if opp_allowed is None:
+        adj = 0.0
+    else:
+        adj = float(np.clip(OPP_ALLOWED_PASS * (opp_allowed - OPP_ALLOWED_LEAGUE),
+                            -OPP_ALLOWED_CLIP, OPP_ALLOWED_CLIP))
+    return adj, float(MAP_KILL_FACTORS.get(map_name, 1.0)) if map_name else 1.0
 
 
 def get_team_players_overall_stats(team_name, shrinkage_rounds=200):
@@ -227,7 +329,8 @@ def get_team_players_overall_stats(team_name, shrinkage_rounds=200):
 
 
 def simulate_team_kills(players_data, sim_rounds, sim_share,
-                        overdispersion=1.10, form_weight=0.3):
+                        overdispersion=1.10, form_weight=FORM_WEIGHT,
+                        opp_allowed=None, map_name=None, level_adj=LEVEL_ADJ):
     """Simuloi koko joukkueen kerralla ja palauttaa datan taulukkoa varten.
 
     sim_rounds: simuloidut kokonaiskierrosmäärät (ctx['rounds']).
@@ -255,6 +358,15 @@ def simulate_team_kills(players_data, sim_rounds, sim_share,
     Vanha 1.25 oli kaksinkertaista kirjanpitoa: kierrosmäärän ja kierrososuuden
     satunnaisuus tuo jo oman hajontansa, joten päälle ei tarvita paljoakaan.
     Liian leveä jakauma näyttää arvoa kaukaisilla linjoilla siellä missä sitä ei ole.
+
+    UUDET KORJAUKSET (ks. vakioiden selitys tiedoston alussa):
+    form_weight: 0,1 (oli 0,3).
+    opp_allowed: VASTUSTAJAN sallimat tapot/kierros (get_team_kills_allowed) -
+                 tämän joukkueen pelaajien KPR:ää korjataan sen mukaan; None = ei
+                 korjausta.
+    map_name:    kartan nimi (MAP_KILL_FACTORS); None / tuntematon = ei korjausta.
+    level_adj:   tasokerroin (LEVEL_ADJ).
+    Järjestys: sekoita muoto -> kalibroi KPR -> + vastustaja -> x kartta -> x taso.
     """
     sim_rounds = np.asarray(sim_rounds, dtype=float)
     sim_share = np.asarray(sim_share, dtype=float)
@@ -263,13 +375,16 @@ def simulate_team_kills(players_data, sim_rounds, sim_share,
     # Kerroin per simulaatio, ei enää yksi vakio koko ottelulle
     share_mult = np.asarray(kpr_share_multiplier(sim_share), dtype=float)
 
+    opp_adj, map_mult = kpr_corrections(opp_allowed, map_name)
+
     results = []
     for p in players_data:
         base_kpr = p['kpr']
         if p.get('recent_kpr') is not None:
             base_kpr = (1 - form_weight) * base_kpr + form_weight * p['recent_kpr']
 
-        eff_kpr = max(base_kpr, 0.001)
+        cal_kpr = KPR_CAL_INTERCEPT + KPR_CAL_SLOPE * base_kpr
+        eff_kpr = max((cal_kpr + opp_adj) * map_mult * level_adj, 0.001)
         expected_k = np.maximum(sim_rounds * eff_kpr * share_mult, 1e-6)
 
         # Negatiivinen binomijakauma: var = overdispersion * mean (vakio p-parametri)
