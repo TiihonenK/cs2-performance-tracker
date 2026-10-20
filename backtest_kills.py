@@ -30,7 +30,11 @@ SHRINK = 200
 TEST_FRACTION = 0.45
 OPP_WINDOW, OPP_MIN = 25, 8
 OVERDISP = 1.10
-FORM_OLD, FORM_NEW = 0.3, 0.1
+FORM_OLD, FORM_NEW = 0.3, 0.05
+# MUOTO: 'kpr_rec30' = viimeiset 30 päivää (vähintään 3 karttaa) tai
+#        'kpr_rec6'  = pelaajan viimeiset FORM_LAST_N karttaa (iästä riippumatta).
+FORM_COL = 'kpr_rec6'
+FORM_LAST_N = 6
 OPP_CLIP = 0.04          # suurin sallittu KPR-korjaus vastustajasta
 MAP_MIN_N = 300          # kartta saa oman kertoimen vain jos otosta riittävästi
 KPR_INTERCEPT, KPR_SLOPE = 1.825, 2.937   # sama fallback kuin match_simulator.py:ssä
@@ -73,9 +77,11 @@ def player_features(df):
             kpr = wk / wr
             shr = (kpr * wr + glob * SHRINK) / (wr + SHRINK)
             rec = d <= 30
-            rkpr = k[:i][rec].sum() / r[:i][rec].sum() if rec.sum() >= 3 else np.nan
-            rows.append((g.index[i], shr, rkpr))
-    f = pd.DataFrame(rows, columns=['ix', 'kpr_shr', 'kpr_rec']).set_index('ix')
+            rkpr30 = k[:i][rec].sum() / r[:i][rec].sum() if rec.sum() >= 3 else np.nan
+            lo = max(0, i - FORM_LAST_N)
+            rkpr6 = k[lo:i].sum() / r[lo:i].sum() if i - lo >= 3 else np.nan
+            rows.append((g.index[i], shr, rkpr30, rkpr6))
+    f = pd.DataFrame(rows, columns=['ix', 'kpr_shr', 'kpr_rec30', 'kpr_rec6']).set_index('ix')
     return df.join(f, how='inner')
 
 
@@ -98,8 +104,9 @@ def opponent_allowed(df):
     return pd.concat(out), league
 
 
-def blend(d, fw):
-    return np.where(d.kpr_rec.notna(), (1 - fw) * d.kpr_shr + fw * d.kpr_rec, d.kpr_shr)
+def blend(d, fw, col=None):
+    rec = d[col or FORM_COL]
+    return np.where(rec.notna(), (1 - fw) * d.kpr_shr + fw * rec, d.kpr_shr)
 
 
 def fit_constants(tr, _league_unused=None):
@@ -151,7 +158,7 @@ def predict_new(d, k, league=None):
 
 
 def predict_old(d):
-    return blend(d, FORM_OLD)
+    return blend(d, FORM_OLD, 'kpr_rec30')
 
 
 def share_mult(s):
@@ -177,6 +184,17 @@ def main(db):
     d = d.merge(oa, on=['match_id', 'opp'], how='left').sort_values('dt').reset_index(drop=True)
     cut = int(len(d) * (1 - TEST_FRACTION))
     tr, te = d.iloc[:cut].copy(), d.iloc[cut:].copy()
+
+    print("\nMUODON PAINO: virhe (KPR, painotettu kierroksilla, x1e4) - pienempi = parempi")
+    print("  (pelkät rivit joilla kumpikin muotoluku on olemassa; viimeiset 45 % = out-of-sample)")
+    both = te[te.kpr_rec30.notna() & te.kpr_rec6.notna()]
+    w = both.rounds.values
+    for col, lab in (('kpr_rec30', '30 pv  '), ('kpr_rec6', f'{FORM_LAST_N} karttaa')):
+        errs = []
+        for fw in (0.0, 0.05, 0.1, 0.15, 0.2, 0.3):
+            p_ = (1 - fw) * both.kpr_shr + fw * both[col]
+            errs.append(f"w={fw:.2f}: {(w * (both.kpr - p_) ** 2).sum() / w.sum() * 1e4:.3f}")
+        print(f"  {lab}  " + "  ".join(errs) + f"   (n={len(both)})")
     print(f"Pelaaja-karttoja: {len(d)} (train {len(tr)}, test {len(te)}); "
           f"aikaväli {d.dt.min().date()} - {d.dt.max().date()}")
 

@@ -60,17 +60,23 @@ HALF_LIFE_DAYS = 150
 # parani -0,0010 +- 0,0004. Aja backtest_kills.py uudestaan kun kantaan on
 # kertynyt reilusti lisää otteluita ja päivitä vakiot sen tulosteesta.
 
-# Kohta 5: muotopaino 0,3 -> 0,1. 30 pv:n KPR perustuu vain muutamaan karttaan
-# ja on kohinaa: paino 0,3 HEIKENSI ulkopuolista ennustetta (virhe 417,5 vs. 415,9
-# ilman muotoa). Samalla se selittää osan kalibrointikulmakertoimen 0,85:stä -
-# kun paino laskee, kulmakerroin nousee ~0,96:een.
-FORM_WEIGHT = 0.1
+# Kohta 5: muotopaino 0,3 -> 0,05. MUOTO = pelaajan VIIMEISET 6 KARTTAA (aiemmin
+# viimeiset 30 päivää). Muutama kartta on kohinaa: paino 0,3 HEIKENSI
+# ulkopuolista ennustetta. Testattu kumpikin ikkuna painoilla 0-0,3
+# (backtest_kills.py): paras paino on molemmilla 0,05-0,1 ja ero painoon 0
+# on vain ~0,07 %, eli muoto lisää ennusteeseen käytännössä hyvin vähän -
+# 6 kartan ikkuna on yhtä hyvä kuin 30 pv mutta tuottaa selkeämmän
+# "Form"-sarakkeen. Matala paino selittää myös osan kalibrointikulmakertoimen
+# noususta (0,85 -> ~0,98).
+FORM_WEIGHT = 0.05
+FORM_LAST_N_MAPS = 6      # montako viimeisintä karttaa muotoon lasketaan
+FORM_MIN_MAPS = 3         # alle tämän karttamäärän muotoa ei käytetä
 
 # Kohta 2: KPR:n kalibrointi  kpr_kal = a + b * kpr.  b < 1 tarkoittaa, että
 # äärimmäiset ennusteet (tähdet) regressoivat keskiarvoon: huipputason malli
 # yliarvioi, alimman tason aliarvioi.
-KPR_CAL_INTERCEPT = 0.0215
-KPR_CAL_SLOPE = 0.9646
+KPR_CAL_INTERCEPT = 0.0093
+KPR_CAL_SLOPE = 0.9830
 
 # Kohta 1: vastustajan "sallitut tapot" (joukkueen viimeisten 25 kartan
 # vastustajien tappoja/kierros, vähintään 8 karttaa). Vaikutus on tilastollisesti
@@ -79,7 +85,7 @@ KPR_CAL_SLOPE = 0.9646
 # KPR += OPP_ALLOWED_PASS * (vastustajan_sallimat - OPP_ALLOWED_LEAGUE).
 # OPP_ALLOWED_LEAGUE on sovitusaineiston OMA keskiarvo (kannan joukkueille), ei
 # koko liigan tappokeskiarvo, jotta korjaus on keskimäärin nolla.
-OPP_ALLOWED_PASS = 0.0690
+OPP_ALLOWED_PASS = 0.0689
 OPP_ALLOWED_LEAGUE = 3.2341
 OPP_ALLOWED_CLIP = 0.04          # suurin sallittu KPR-korjaus suuntaansa
 OPP_WINDOW, OPP_MIN_MAPS = 25, 8
@@ -93,8 +99,8 @@ LEVEL_ADJ = 0.9878
 # versiota testattiin eikä siinä ollut käyttökelpoista signaalia (out-of-sample
 # kulmakerroin 0,08 ~ kohinaa), joten sellaista ei ole. Kartta saa oman kertoimen
 # vain jos otosta oli yli 300 karttaa; "Muu"/tuntematon = 1,0.
-MAP_KILL_FACTORS = {'Ancient': 1.0127, 'Anubis': 1.0012, 'Cache': 1.0033, 'Dust2': 0.9856,
-                    'Inferno': 0.9713, 'Mirage': 1.0035, 'Nuke': 1.0104, 'Overpass': 0.9925,
+MAP_KILL_FACTORS = {'Ancient': 1.0127, 'Anubis': 1.0011, 'Cache': 1.0037, 'Dust2': 0.9856,
+                    'Inferno': 0.9712, 'Mirage': 1.0035, 'Nuke': 1.0104, 'Overpass': 0.9926,
                     'Train': 1.0}
 # Valittavissa dashboardin kartta-valikossa (aktiivinen karttapooli)
 MAP_NAMES = ['Ancient', 'Anubis', 'Dust2', 'Inferno', 'Mirage', 'Nuke', 'Overpass']
@@ -233,7 +239,7 @@ def get_team_players_overall_stats(team_name, shrinkage_rounds=200):
     #    KORJAUS 2: myös m.score_team1 / m.score_team2, jotta KPR voidaan laskea
     #    todellisilla pelatuilla kierroksilla kiinteän 21.5-oletuksen sijaan.
     query = """
-    SELECT p.name, s.kills, m.match_date, m.score_team1, m.score_team2
+    SELECT p.name, s.kills, m.match_date, m.score_team1, m.score_team2, s.match_id
     FROM players p
     JOIN player_stats s ON p.id = s.player_id
     JOIN matches m ON s.match_id = m.id
@@ -257,6 +263,7 @@ def get_team_players_overall_stats(team_name, shrinkage_rounds=200):
 
     # 3. LASKETAAN AIKAPAINOTETTU KPR (Recent form)
     df['match_date'] = pd.to_datetime(df['match_date'], format='%Y-%m-%d', errors='coerce')
+    df['match_id_num'] = pd.to_numeric(df['match_id'], errors='coerce').fillna(0)
     now = pd.to_datetime('today')
     df['days_ago'] = (now - df['match_date']).dt.days.fillna(90)
     # KORJAUS: eksponentiaalinen puoliintumisaika lineaarisen 1.0-1.5 painon sijaan.
@@ -277,11 +284,15 @@ def get_team_players_overall_stats(team_name, shrinkage_rounds=200):
         overall_kpr = group['kills'].sum() / actual_rounds_sum if actual_rounds_sum > 0 else 0
 
         # --- FORMIN LASKENTA ---
-        recent_group = group[group['days_ago'] <= 30]
+        # UUSI: muoto = pelaajan viimeiset FORM_LAST_N_MAPS karttaa (ei enää 30 pv:n
+        # aikaikkunaa). Järjestys päivämäärän mukaan, saman päivän kartat HLTV:n
+        # kartta-ID:n mukaan (kasvaa ajan mukana).
+        recent_group = (group.sort_values(['match_date', 'match_id_num'], ascending=False)
+                             .head(FORM_LAST_N_MAPS))
         recent_maps = len(recent_group)
         recent_rounds = recent_group['total_rounds'].sum()
 
-        if recent_maps >= 3 and recent_rounds > 0:
+        if recent_maps >= FORM_MIN_MAPS and recent_rounds > 0:
             recent_kpr = recent_group['kills'].sum() / recent_rounds
             form_diff = recent_kpr - overall_kpr
 
@@ -417,7 +428,7 @@ def simulate_team_kills(players_data, sim_rounds, sim_share,
             'Mallin linja': line,
             'P.over': f"{p_over * 100:.1f}%",
             'P.under': f"{p_under * 100:.1f}%",
-            'Form (30d)': p['form'],
+            f'Form ({FORM_LAST_N_MAPS} krt)': p['form'],
             '_sim_kills': sim_kills,  # raakadata jatkokäyttöön (pudota näyttötaulukosta)
         })
 

@@ -35,7 +35,7 @@ BASE_URL = "https://www.hltv.org"
 # ASETUKSET
 # ---------------------------------------------------------------------------
 # Kuinka monta joukkuetta rankingista otetaan mukaan.
-TOP_N_TEAMS = 50
+TOP_N_TEAMS = 85
 
 # Jos joukkueelle ei löydy aiempaa scrape-merkintää (eli sitä ei ole koskaan
 # haettu), käytetään tätä oletushistoriaa ensimmäisellä ajokerralla.
@@ -399,13 +399,13 @@ def get_top_teams(fetcher, conn, top_n=TOP_N_TEAMS):
     print(f"Löydettiin {len(teams_data)} joukkuetta (sivulla oli yhteensä {len(all_ranked)} rankattua joukkuetta).")
 
     # HLTV:n ranking-sivu on perinteisesti listannut vain 30 joukkuetta yhdellä
-    # sivulla. Jos tähän osutaan, top 50 ei yksinkertaisesti ole saatavilla
+    # sivulla. Jos tähän osutaan, top 85 ei yksinkertaisesti ole saatavilla
     # tältä sivulta - silloin pitää käyttää eri lähdettä (esim. Valve-ranking
     # /valve-ranking/teams tai /stats/teams -listaus suodattimilla).
     if len(teams_data) < top_n:
         print(f"[!] HUOM: pyydettiin {top_n} joukkuetta, mutta sivulta löytyi vain {len(teams_data)}.")
         print("[!] HLTV:n /ranking/teams näyttää usein vain 30 joukkuetta. Jos tarvitset")
-        print("[!] oikeasti 50, vaihda lähteeksi esim. /valve-ranking/teams tai stats-listaus.")
+        print("[!] oikeasti 85, vaihda lähteeksi esim. /valve-ranking/teams tai stats-listaus.")
 
     return teams_data
 
