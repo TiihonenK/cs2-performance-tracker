@@ -305,7 +305,9 @@ class FlareSolverrFetcher:
         # heti (depends_on takaa vain että kontti on käynnistynyt, ei että sen
         # sisäinen Flask-palvelin+selain on jo valmis).
         last_error = None
-        for attempt in range(12):
+        server_errors = 0
+        MAX_SERVER_ERRORS = 4
+        for attempt in range(12 + MAX_SERVER_ERRORS):
             try:
                 resp = requests.post(
                     f"{self.base_url}/v1",
@@ -331,6 +333,17 @@ class FlareSolverrFetcher:
                 last_error = e
                 print(f"     [i] FlareSolverr ei vielä vastaa (yritys {attempt + 1}/12), odotetaan 5s...")
                 time.sleep(5)
+            except (requests.exceptions.HTTPError, requests.exceptions.Timeout, RuntimeError) as e:
+                # FlareSolverr vastasi mutta haaste/sivun lataus epäonnistui (esim. 500
+                # tai aikakatkaisu Cloudflare-tarkistuksessa). Tämä on yleensä ohimenevää,
+                # joten odotetaan pidempään ja yritetään uudelleen sen sijaan että koko ajo kaatuu.
+                last_error = e
+                server_errors += 1
+                if server_errors >= MAX_SERVER_ERRORS:
+                    break
+                wait = 20 * server_errors
+                print(f"     [!] FlareSolverr-virhe ({e}) - yritys {server_errors}/{MAX_SERVER_ERRORS}, odotetaan {wait}s...")
+                time.sleep(wait)
         raise RuntimeError(f"FlareSolverr ei vastannut yrityksistä huolimatta: {last_error}")
 
     def get(self, url, wait_seconds=0, timeout=60):
@@ -651,7 +664,14 @@ if __name__ == "__main__":
     db_conn = setup_database()
 
     try:
-        teams = get_top_teams(fetcher, db_conn, TOP_N_TEAMS)
+        teams = []
+        for ranking_attempt in range(3):
+            try:
+                teams = get_top_teams(fetcher, db_conn, TOP_N_TEAMS)
+                break
+            except Exception as e:
+                print(f"[VIRHE] Rankingin haku epäonnistui (yritys {ranking_attempt + 1}/3): {e}")
+                time.sleep(60)
         if teams:
             for team_index, team in enumerate(teams, start=1):
                 print(f"\n===== Joukkue {team_index}/{len(teams)}: {team['name']} =====")
@@ -673,7 +693,18 @@ if __name__ == "__main__":
                     else:
                         print(f"  [i] {team['name']} ei ole skrapattu aiemmin, haetaan viimeiset {DEFAULT_LOOKBACK_DAYS} päivää.")
 
-                matches = get_team_match_links(fetcher, team['id'], team['name'], start_date, today)
+                matches = None
+                for list_attempt in range(3):
+                    try:
+                        matches = get_team_match_links(fetcher, team['id'], team['name'], start_date, today)
+                        break
+                    except Exception as e:
+                        print(f"  [VIRHE] Ottelulistan haku epäonnistui joukkueelle {team['name']} (yritys {list_attempt + 1}/3): {e}")
+                        time.sleep(30)
+                if matches is None:
+                    # Ei merkitä joukkuetta haetuksi, jotta se yritetään uudelleen seuraavalla ajolla.
+                    print(f"  [!] Ohitetaan joukkue {team['name']} tällä ajolla.")
+                    continue
 
                 for match in matches:
                     if match_already_scraped(db_conn, match['id']):
