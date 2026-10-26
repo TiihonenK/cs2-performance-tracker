@@ -409,12 +409,14 @@ def simulate_team_kills(players_data, sim_rounds, sim_share,
         proj_k = np.mean(sim_kills)
         std_k = np.std(sim_kills)
 
-        # Mallin oma keskikohta = projektion pyöristys alaspäin + 0.5. Tämä EI ole
-        # linja johon voi lyödä eikä sen kuulu osua bookkerin lukuun - se on vain
-        # luettava tapa näyttää mihin projektio asettuu. Varsinainen työkalu on
-        # kills_probability_at_line(), joka hinnoittelee bookkerin OIKEAN linjan.
-        base_line = int(math.floor(proj_k))
-        line = base_line + 0.5
+        # KORJATTU: mallin linja = se puolilukuinen linja jolla P(yli) on lähimpänä
+        # 50 % (= linja jonka bookkeri asettaisi jos olisi mallin kanssa samaa
+        # mieltä). Vanha "projektio alaspäin + 0.5" perustui KESKIARVOON, joka
+        # oikealle vinossa tappojakaumassa on 0.5-1 tappoa mediaanin yläpuolella:
+        # vanhan linjan kohdalla P(yli) oli tyypillisesti vain ~42-46 %, joten
+        # linja näytti systemaattisesti liian korkealta ja ALI-vedot näyttivät
+        # arvokkaammilta kuin ne olivat.
+        line = fair_line(sim_kills)
 
         p_over = np.sum(sim_kills > line) / n_sims
         p_under = np.sum(sim_kills < line) / n_sims
@@ -442,6 +444,14 @@ def simulate_team_kills(players_data, sim_rounds, sim_share,
 # vain omalle automaattisesti generoidulle linjalleen ("Line"-sarake yllä),
 # mikä ei kerro mitään siitä onko BOOKKERIN oikea linja väärin hinnoiteltu.
 # Näillä kahdella funktiolla lasketaan mallin arvio mille tahansa linjalle.
+
+def fair_line(sim_kills):
+    """Puolilukuinen linja, jolla mallin P(yli) on lähimpänä 50 %."""
+    sim_kills = np.asarray(sim_kills)
+    med = math.floor(float(np.median(sim_kills)))
+    candidates = [med - 1.5, med - 0.5, med + 0.5, med + 1.5]
+    return min(candidates, key=lambda L: abs(float(np.mean(sim_kills > L)) - 0.5))
+
 
 def kills_probability_at_line(sim_kills, line):
     """Palauttaa mallin arvion tietylle NIMENOMAISELLE linjalle (esim. bookkerin

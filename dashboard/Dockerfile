@@ -12,7 +12,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # eikä .git tai kannat päädy vahingossa mukaan). betting_calculator.py EI ole mukana -
 # se vaatii team_elo_calculator.py-tiedoston jota repossa ei ole, eikä dashboard.py
 # käytä sitä mihinkään.
-COPY dashboard.py players_props.py match_simulator.py ./
+COPY dashboard.py players_props.py match_simulator.py bet_calibration.py ./
 COPY dashboard/.streamlit ./.streamlit
 
 COPY dashboard/entrypoint.sh /entrypoint.sh

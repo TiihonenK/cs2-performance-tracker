@@ -17,6 +17,27 @@ from players_props import (
     OPP_ALLOWED_LEAGUE,
 )
 from match_simulator import simulate_match_context
+import os
+import bet_calibration as bc
+
+# Saman kartan vedot korreloivat (kierrosmäärä, jatkoaika) - tämän yli varoitetaan.
+MAX_BETS_PER_MAP = 2
+# HLTV-kannan tuoreimman kartan ikä, jonka jälkeen varoitetaan vanhentuneesta datasta.
+STALE_DATA_DAYS = 3
+
+
+@st.cache_data(show_spinner=False)
+def _bet_calibration_cached(db_mtime):
+    return bc.fit_calibration('my_bets.db')
+
+
+def get_bet_calibration():
+    """Kalibrointi sovitetaan uudelleen vain kun my_bets.db on muuttunut."""
+    try:
+        mtime = os.path.getmtime('my_bets.db')
+    except OSError:
+        mtime = 0
+    return _bet_calibration_cached(mtime)
 
 def init_betting_db():
     conn = sqlite3.connect('my_bets.db')
@@ -43,7 +64,10 @@ def init_betting_db():
     # vedoista oikeasti 60 %) etkä laskea CLV:tä (voititko markkinan liikkeen).
     # Pelkkä voitto/tappio-historia vaatii satoja vetoja ennen kuin siitä näkee
     # mitään; kalibrointi ja CLV kertovat saman asian kymmenesosalla otoksesta.
-    for col, ddl in [("model_prob", "REAL"), ("opp_odds", "REAL"), ("map_pool", "TEXT")]:
+    # cal_prob = kalibroitu osumatodennäköisyys vedon hetkellä (bet_calibration.py).
+    # Tallennetaan, jotta myöhemmin voi tarkistaa osuuko kalibrointikin.
+    for col, ddl in [("model_prob", "REAL"), ("opp_odds", "REAL"), ("map_pool", "TEXT"),
+                     ("cal_prob", "REAL")]:
         try:
             c.execute(f"ALTER TABLE bets ADD COLUMN {col} {ddl}")
         except sqlite3.OperationalError:
@@ -117,7 +141,7 @@ def init_betting_db():
 # muokkausta varten - ks. init_betting_db():n kommentti näistä sarakkeista.
 def save_bet(bet_type, description, stake, odds, tournament, map_name, model_prob=None,
              player=None, direction=None, line=None, team1=None, team2=None, bet_date=None,
-             opp_odds=None, map_pool=None):
+             opp_odds=None, map_pool=None, cal_prob=None):
     # UUSI: bet_date antaa kutsujan vahvistaa itse minkä päivän veto on (oletuksena
     # tämä päivä, mutta jälkikäteen kirjattavalle vedolle voi valita toisen päivän -
     # ks. tab1:n "Turnaus ja päivämäärä" -lohko). Jos sitä ei anneta, käyttäydytään
@@ -126,10 +150,11 @@ def save_bet(bet_type, description, stake, odds, tournament, map_name, model_pro
     conn = sqlite3.connect('my_bets.db')
     c = conn.cursor()
     c.execute("""INSERT INTO bets (date, type, description, stake, odds, status, tournament, map,
-                                    model_prob, player, direction, line, team1, team2, opp_odds, map_pool)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                    model_prob, player, direction, line, team1, team2, opp_odds, map_pool,
+                                    cal_prob)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
               (date_str, bet_type, description, stake, odds, "Odottaa", tournament, map_name,
-               model_prob, player, direction, line, team1, team2, opp_odds, map_pool))
+               model_prob, player, direction, line, team1, team2, opp_odds, map_pool, cal_prob))
     conn.commit()
     conn.close()
     st.success(f"✅ Veto tallennettu turnaukseen: {tournament} ({map_name})!")
@@ -194,7 +219,22 @@ st.title("CS2 Vedonlyöntimalli 2.1")
 
 conn = sqlite3.connect('hltv_data.db')
 teams_df = pd.read_sql_query("SELECT id, name FROM teams ORDER BY name", conn)
+# UUSI: datan tuoreus. Jos scraper ei ole ajanut, malli laskee vanhoilla
+# kokoonpanoilla ja tasoilla tietämättään - ja varoittamatta.
+_latest = conn.execute("SELECT MAX(match_date) FROM matches WHERE match_date > '2020'").fetchone()[0]
 conn.close()
+try:
+    _age = (datetime.now() - datetime.strptime(_latest[:10], "%Y-%m-%d")).days
+except (TypeError, ValueError):
+    _age = None
+if _age is None or _age > STALE_DATA_DAYS:
+    st.error(
+        f"⚠️ HLTV-kannan tuorein kartta on {_latest or 'tuntematon'} "
+        f"({_age if _age is not None else '?'} pv sitten). Aja scraper ennen vetojen "
+        f"laskemista - muuten kokoonpanot ja tasot ovat vanhentuneita."
+    )
+else:
+    st.caption(f"HLTV-data päivitetty: tuorein kartta {_latest} ({_age} pv sitten).")
 team_names_list = teams_df['name'].tolist()
 
 tab1, tab2 = st.tabs(["Vedonlyönti", "📈 Vetoseuranta"])
@@ -527,25 +567,12 @@ with tab1:
                 f"vs. malli **{model_p*100:.1f} %** ({model_p*100 - fair_self*100:+.1f} %-yks.)"
             )
 
-        if model_odds:
-            if kerroin > model_odds:
-                st.success(f"✅ Bookkerin kerroin ({kerroin}) ylittää mallin kerroinrajan ({model_odds:.2f}) - mallin mukaan mahdollista arvoa.")
-            else:
-                st.warning(f"⚠️ Bookkerin kerroin ({kerroin}) EI ylitä mallin kerroinrajaa ({model_odds:.2f}).")
-
-            # Kelly-panossuositus. Täysi Kelly on käytännössä liian aggressiivinen,
-            # koska mallin todennäköisyys on itsekin arvio - neljäsosa-Kelly on
-            # tavallinen kompromissi. Jos suositus on negatiivinen, vetoa ei ole.
-            b = kerroin - 1.0
-            kelly = (model_p * b - (1 - model_p)) / b if b > 0 else 0.0
-            if kelly > 0:
-                st.caption(
-                    f"Kelly: täysi {kelly*100:.1f} % kassasta, "
-                    f"**neljäsosa-Kelly {kelly*25:.2f} %** (1000 € kassalla {kelly*250:.2f} €). "
-                    f"Mallin EV {(model_p*kerroin-1)*100:+.1f} %."
-                )
-            else:
-                st.caption("Kelly: ei panosta — mallin mukaan negatiivinen odotusarvo.")
+        # MUUTETTU: "kerroin ylittää mallin kerroinrajan" -vihje ja Kelly raa'alla
+        # mallin todennäköisyydellä poistettu. 1 465 vedon perusteella raaka mallin
+        # todennäköisyys ei erottele osuvia vetoja (ks. bet_calibration.py), joten se
+        # näytti arvoa myös siellä missä sitä ei ollut. Varsinainen lyö/älä lyö
+        # -arvio on nyt alempana turnausvalinnan jälkeen, koska kalibrointi
+        # tarvitsee turnauksen (pienet turnaukset / karsinnat).
 
         # UUSI: turnaus ja päivämäärä vahvistetaan AINA käsin tässä, aivan
         # lomakkeen alareunassa, ERILLÄÄN kaikista yllä automaattisesti JSON:lla
@@ -576,6 +603,55 @@ with tab1:
                 "-osiosta."
             )
 
+        # ------------------------------------------------------------------
+        # UUSI: LYÖ / ÄLÄ LYÖ - kalibroitu arvio omista ratkaistuista vedoista
+        # ------------------------------------------------------------------
+        # Raaka mallin todennäköisyys korvataan todennäköisyydellä, joka on
+        # sovitettu siihen miten vetosi ovat OIKEASTI osuneet (kerroin, suunta,
+        # turnauksen koko ja mallin erimielisyys kertoimen kanssa). Sovitus
+        # päivittyy itsestään joka kerta kun vetoja ratkeaa. Ks. bet_calibration.py.
+        cal_p = None
+        if valittu_pelaaja in sim_kills_lookup:
+            cal = get_bet_calibration()
+            ok, cal_p, cal_ev, why = bc.bet_verdict(model_p, kerroin, suunta, valittu_turnaus, cal)
+            if ok:
+                st.success(f"✅ **Lyö.** {why}")
+            else:
+                st.error(f"⛔ **Älä lyö.** {why}")
+            min_o = bc.min_odds_for_value(model_p, suunta, valittu_turnaus, cal)
+            st.caption(
+                f"Pienin kerroin jolla tämä veto ylittää {bc.MIN_EV*100:.0f} %:n EV-rajan: "
+                f"**{min_o:.2f}**" if min_o else
+                "Tälle vedolle ei löydy järkevää kerrointa jolla se olisi arvoveto "
+                "(tyypillisesti pieni turnaus / karsinta)."
+            )
+            if ok:
+                b = kerroin - 1.0
+                kelly = (cal_p * b - (1 - cal_p)) / b
+                st.caption(
+                    f"Neljäsosa-Kelly kalibroidulla todennäköisyydellä: **{kelly*25:.2f} %** kassasta "
+                    f"(1000 € kassalla {kelly*250:.2f} €)."
+                )
+
+            # Saman kartan vedot korreloivat: jos kartta venyy jatkoajalle, kaikki
+            # ALI-vedot häviävät yhdessä. Datassa kaikki kartan vedot hävisivät
+            # 6.8 %:ssa kartoista, kun riippumattomilla vedoilla odotus on 2.9 %.
+            _c = sqlite3.connect('my_bets.db')
+            same_map = _c.execute(
+                "SELECT COUNT(*), SUM(direction = ?) FROM bets WHERE status = 'Odottaa' "
+                "AND team1 = ? AND team2 = ? AND map = ?",
+                (suunta, res['t1'], res['t2'], valittu_kartta)).fetchone()
+            _c.close()
+            if same_map and same_map[0] and same_map[0] >= MAX_BETS_PER_MAP:
+                st.warning(
+                    f"⚠️ Kartalla {valittu_kartta} on jo {same_map[0]} vireillä olevaa vetoa "
+                    f"({int(same_map[1] or 0)} samaan suuntaan). Saman kartan vedot voittavat ja "
+                    f"häviävät yhdessä (kierrosmäärä / jatkoaika) - valitse kartalta enintään "
+                    f"{MAX_BETS_PER_MAP} parasta (suurin EV)."
+                )
+            with st.expander("Mitä kalibrointi on oppinut vedoistasi?"):
+                st.text(bc.describe(cal))
+
         if st.button("Tallenna veto", type="primary"):
             if not valittu_turnaus:
                 st.error(
@@ -597,7 +673,8 @@ with tab1:
                          model_prob=(model_p if model_odds else None),
                          player=valittu_pelaaja, direction=suunta, line=custom_line,
                          team1=res['t1'], team2=res['t2'], bet_date=bet_date_str,
-                         opp_odds=vastakerroin, map_pool=res.get('map_name'))
+                         opp_odds=vastakerroin, map_pool=res.get('map_name'),
+                         cal_prob=cal_p)
 
 # ==========================================
 # VÄLILEHTI 2: VETOSEURANTA JA TURNAUKSET
