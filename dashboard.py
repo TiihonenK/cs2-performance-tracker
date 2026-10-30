@@ -215,6 +215,35 @@ def show_bet_summary(df):
     c4.metric("Vireillä", f"{len(pending)}")
 
 st.set_page_config(page_title="CS2 Vetomalli", layout="wide", page_icon="🎯")
+
+# Estää zoomauksen puhelimella (vahingossa tehty kaksoisnapautus tai nipistys).
+# 1) CSS: touch-action sallii vain vierityksen -> ei kaksoisnapautus- eikä nipistyszoomia.
+st.markdown(
+    "<style>html, body, .stApp {touch-action: pan-x pan-y;}</style>",
+    unsafe_allow_html=True,
+)
+# 2) JS: viewport-meta ilman zoomia + iOS Safarin gesture-tapahtumat (Safari ohittaa
+#    osan meta-asetuksista). Iframe on samasta origin-osoitteesta, joten parent-dokumenttiin
+#    pääsee käsiksi.
+import streamlit.components.v1 as components
+components.html(
+    """
+    <script>
+    (function () {
+      try {
+        var doc = window.parent.document;
+        var meta = doc.querySelector('meta[name=viewport]');
+        if (!meta) { meta = doc.createElement('meta'); meta.name = 'viewport'; doc.head.appendChild(meta); }
+        meta.content = 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no';
+        ['gesturestart', 'gesturechange', 'gestureend'].forEach(function (ev) {
+          doc.addEventListener(ev, function (e) { e.preventDefault(); }, { passive: false });
+        });
+      } catch (e) {}
+    })();
+    </script>
+    """,
+    height=0,
+)
 st.title("CS2 Vedonlyöntimalli 2.1")
 
 conn = sqlite3.connect('hltv_data.db')
