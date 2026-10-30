@@ -15,10 +15,10 @@
     <div class="bet-right">
       {% if profit is not none %}
         <div class="bet-profit num {{ profit | tone }}">{{ profit | eur }}</div>
-        <div class="bet-meta num">{{ b.stake | num(0) }} € @ {{ b.odds | num(2) }}</div>
+        <div class="bet-meta num">{{ b.stake | num(0) }} € @ {{ b.odds | odds_fmt }}</div>
         <span class="chip {{ 'win' if st == 'Voitto' else ('loss' if st == 'Tappio' else 'warn') }}">{{ st }}</span>
       {% else %}
-        <div class="bet-profit num">{{ b.stake | num(0) }} € @ {{ b.odds | num(2) }}</div>
+        <div class="bet-profit num">{{ b.stake | num(0) }} € @ {{ b.odds | odds_fmt }}</div>
         <div class="bet-meta num">voitto {{ (b.stake * (b.odds - 1)) | eur }}</div>
       {% endif %}
     </div>

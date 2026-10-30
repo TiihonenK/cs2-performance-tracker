@@ -2,7 +2,7 @@
 <div class="stack" style="gap:10px">
   <div class="eval-stats">
     <div><div class="lab">{{ 'Yli' if ev.direction == 'OVER' else 'Alle' }} {{ ev.line | line_fmt }}</div><div class="val num">{{ (ev.model_p * 100) | pct(1) }}</div></div>
-    <div><div class="lab">Reilu kerroin</div><div class="val num">{{ ev.fair_odds | num(2) if ev.fair_odds else '–' }}</div></div>
+    <div><div class="lab">Reilu kerroin</div><div class="val num">{{ ev.fair_odds | odds_fmt if ev.fair_odds else '–' }}</div></div>
     <div><div class="lab">{{ 'Alle' if ev.direction == 'OVER' else 'Yli' }} {{ ev.line | line_fmt }}</div><div class="val num">{{ ((ev.p_under if ev.direction == 'OVER' else ev.p_over) * 100) | pct(1) }}</div></div>
   </div>
   <div class="histwrap"><canvas data-chart="hist" data-payload='{{ {"x": ev.hist.x, "p": ev.hist.p, "side": ev.hist.side, "dir": ev.direction, "line": ev.line} | tojson_attr }}' role="img" aria-label="Tappojakauma"></canvas></div>
@@ -14,7 +14,7 @@
     <div class="verdict-t"><svg class="icon"><use href="#{{ 'i-check' if ev.verdict.ok else 'i-x' }}"/></svg>{{ 'Lyö' if ev.verdict.ok else 'Älä lyö' }}</div>
     <p>{{ ev.verdict.why }}</p>
     <p class="sec" style="font-size:.82rem">
-      {% if ev.verdict.min_odds %}Pienin kerroin jolla EV ylittää {{ ev.verdict.min_ev | num(0) }} %: <b>{{ ev.verdict.min_odds | num(2) }}</b>.{% else %}Millään järkevällä kertoimella tämä ei ole arvoveto (tyypillisesti pieni turnaus / karsinta).{% endif %}
+      {% if ev.verdict.min_odds %}Pienin kerroin jolla EV ylittää {{ ev.verdict.min_ev | num(0) }} %: <b>{{ ev.verdict.min_odds | odds_fmt }}</b>.{% else %}Millään järkevällä kertoimella tämä ei ole arvoveto (tyypillisesti pieni turnaus / karsinta).{% endif %}
       {% if ev.verdict.ok %} Neljäsosa-Kelly: <b>{{ ev.verdict.kelly_quarter | num(2) }} %</b> kassasta. Kalibroitu todennäköisyys on arvio ja yläpäässä liian optimistinen - harkitse tasapanosta.{% endif %}
     </p>
   </div>

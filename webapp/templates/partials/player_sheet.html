@@ -19,7 +19,7 @@
         <input type="number" name="line" id="s-line" value="{{ default_line }}" step="0.5" inputmode="decimal"><button class="btn" type="button" data-step="0.5" data-target="s-line" aria-label="Suurenna">+</button></div>
     </div>
     <div class="form-grid">
-      <div class="field"><span>Bookkerin kerroin</span><input type="number" name="odds" id="s-odds" value="1.85" min="1.01" step="0.01" inputmode="decimal"></div>
+      <div class="field"><span>Bookkerin kerroin</span><input type="number" name="odds" id="s-odds" value="1.85" min="1.01" step="any" inputmode="decimal"></div>
       <div class="field"><span>Panos (€)</span><input type="number" name="stake" id="s-stake" value="10" min="1" step="1" inputmode="decimal"></div>
       <div class="field full"><span>Turnaus</span>
         <select name="tournament" id="s-tournament" required>
@@ -29,7 +29,7 @@
     </div>
     <div id="eval" hx-get="/sim/{{ sid }}/eval" hx-trigger="load, change from:#betform delay:150ms, input from:#betform delay:350ms" hx-include="#betform" hx-target="this" hx-swap="innerHTML" hx-sync="this:replace"></div>
     <div class="form-grid">
-      <div class="field"><span>Vastapuolen kerroin <span class="muted">(0 = ei)</span></span><input type="number" name="opp_odds" id="s-opp" value="0" min="0" step="0.01" inputmode="decimal"></div>
+      <div class="field"><span>Vastapuolen kerroin <span class="muted">(0 = ei)</span></span><input type="number" name="opp_odds" id="s-opp" value="0" min="0" step="any" inputmode="decimal"></div>
       <div class="field"><span>Päivämäärä</span><input type="date" name="bet_date" value="{{ today }}"></div>
     </div>
     <button class="btn primary block" type="submit" {{ 'disabled' if not tournaments }}>Tallenna veto</button>

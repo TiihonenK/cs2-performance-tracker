@@ -65,6 +65,17 @@ def line_fmt(v):
     return "–" if v is None else f"{v:g}"
 
 
+def odds_fmt(v):
+    """Kerroin 2-3 desimaalilla: 1,85 / 1,751 (ei pyöristetä 3. desimaalia pois)."""
+    v = _num(v)
+    if v is None:
+        return "–"
+    s = f"{v:.3f}"
+    if s.endswith("0"):
+        s = s[:-1]
+    return s.replace(".", ",")
+
+
 def tone(v):
     v = _num(v)
     if v is None or abs(v) < 1e-9:
@@ -91,7 +102,7 @@ def pretty_day(d):
 # Selaimen välimuistin tyhjennys kun staattiset tiedostot muuttuvat
 templates.env.globals["v"] = int(max(p.stat().st_mtime for p in (BASE / "static").iterdir()))
 
-for fn in (eur, pct, num, line_fmt, tone, pretty_day):
+for fn in (eur, pct, num, line_fmt, odds_fmt, tone, pretty_day):
     templates.env.filters[fn.__name__] = fn
 templates.env.filters["tojson_attr"] = lambda v: json.dumps(v, separators=(",", ":"), default=float)
 

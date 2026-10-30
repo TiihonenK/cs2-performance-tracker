@@ -12,8 +12,8 @@
       <div class="seg dir"><input type="radio" name="direction" id="e-under" value="UNDER" {{ 'checked' if bet.direction == 'UNDER' }}><label for="e-under">Alle</label><input type="radio" name="direction" id="e-over" value="OVER" {{ 'checked' if bet.direction != 'UNDER' }}><label for="e-over">Yli</label></div></div>
     <div class="field"><span>Linja</span><input type="number" name="line" value="{{ bet.line if bet.line is not none else 14.5 }}" step="0.5" inputmode="decimal"></div>
     <div class="field"><span>Panos (€)</span><input type="number" name="stake" value="{{ bet.stake }}" min="1" step="1" inputmode="decimal"></div>
-    <div class="field"><span>Kerroin</span><input type="number" name="odds" value="{{ bet.odds }}" min="1.01" step="0.01" inputmode="decimal"></div>
-    <div class="field"><span>Vastapuolen kerroin <span class="muted">(0 = ei)</span></span><input type="number" name="opp_odds" value="{{ bet.opp_odds or 0 }}" min="0" step="0.01" inputmode="decimal"></div>
+    <div class="field"><span>Kerroin</span><input type="number" name="odds" value="{{ bet.odds }}" min="1.01" step="any" inputmode="decimal"></div>
+    <div class="field"><span>Vastapuolen kerroin <span class="muted">(0 = ei)</span></span><input type="number" name="opp_odds" value="{{ bet.opp_odds or 0 }}" min="0" step="any" inputmode="decimal"></div>
     <div class="field"><span>Turnaus</span><select name="tournament">{% for t in tournaments %}<option {{ 'selected' if t == bet.tournament }}>{{ t }}</option>{% endfor %}</select></div>
     <div class="field"><span>Päivämäärä</span><input type="date" name="bet_date" value="{{ bet_date }}"></div>
     <div class="field"><span>Kartta</span><select name="map_label">{% for i in range(1, 6) %}<option {{ 'selected' if bet.map == 'Kartta ' ~ i }}>Kartta {{ i }}</option>{% endfor %}</select></div>
