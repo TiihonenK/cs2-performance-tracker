@@ -1,0 +1,62 @@
+<section class="card">
+  <div class="card-h"><h3>Mallin kalibrointi</h3><span class="sub">osuuko mallin %-arvio?</span></div>
+  {% if calib %}
+    <p class="sec" style="margin:0 0 10px;font-size:.88rem">Jos mallin mukaan vedot osuvat 60 %:ssa, toteuman pitäisi olla lähellä sitä. Pisteet ovat luokkien keskiarvoja, pystyviiva 80 %:n luottamusväli. Diagonaali = täydellinen kalibrointi.</p>
+    <div class="chartbox tall"><canvas data-chart="calib" data-payload='{{ calib | tojson_attr }}' role="img" aria-label="Mallin arvio vs. toteutunut osumatodennäköisyys"></canvas></div>
+    <div class="kv" style="margin-top:8px"><span>{{ calib.n }} vetoa</span><span>Brier <b>{{ calib.brier | num(4) }}</b></span></div>
+    <details class="tablefold"><summary>Näytä taulukkona</summary>
+      <div class="tscroll"><table class="t"><thead><tr><th>Luokka</th><th>Vetoja</th><th>Malli</th><th>Toteuma</th><th>ROI</th></tr></thead><tbody>
+      {% for r in calib.rows %}<tr><td>{{ r.bin }}</td><td>{{ r.n }}</td><td>{{ r.pred | pct(1) }}</td><td>{{ r.actual | pct(1) }}</td><td class="{{ r.roi | tone }}">{{ r.roi | pct(1, true) }}</td></tr>{% endfor %}
+      </tbody></table></div></details>
+    {% if calib.n < 100 %}<p class="muted" style="font-size:.82rem;margin:8px 0 0">Alle 100 vetoa - luvut heiluvat vielä paljon.</p>{% endif %}
+  {% else %}<div class="empty">Ei ratkaistuja vetoja joissa mallin arvio on tallessa.</div>{% endif %}
+</section>
+
+{% if by_dir %}
+<section class="card">
+  <div class="card-h"><h3>Kalibrointi suunnittain</h3><span class="sub">toteuma − malli</span></div>
+  <div class="grid2">
+  {% for d in by_dir %}
+    <div class="tile" style="background:var(--surface-2);border:0">
+      <div class="lab"><span class="chip {{ 'under' if d.name == 'UNDER' else 'over' }}">{{ 'Alle' if d.name == 'UNDER' else 'Yli' }}</span> · {{ d.n }}</div>
+      <div class="val num {{ d.diff | tone }}">{{ d.diff | pct(1, true) }}</div>
+      <div class="hint">malli {{ d.pred | pct(1) }} → toteuma {{ d.actual | pct(1) }}</div>
+      <div class="hint">ROI <b class="{{ d.roi | tone }}">{{ d.roi | pct(1, true) }}</b></div>
+    </div>
+  {% endfor %}
+  </div>
+  <p class="muted" style="font-size:.82rem;margin:10px 0 0">Negatiivinen ero = malli yliarvioi tämän suunnan. Saman ottelun vedot korreloivat, joten pieniä eroja ei kannata tulkita.</p>
+</section>
+{% endif %}
+
+<section class="card">
+  <div class="card-h"><h3>Malli vs. markkina</h3><span class="sub">vaatii vastapuolen kertoimen</span></div>
+  {% if mvm %}
+    <div class="grid3">
+      <div class="tile" style="background:var(--surface-2);border:0"><div class="lab">Brier malli</div><div class="val num">{{ mvm.brier_model | num(4) }}</div></div>
+      <div class="tile" style="background:var(--surface-2);border:0"><div class="lab">Brier markkina</div><div class="val num">{{ mvm.brier_market | num(4) }}</div></div>
+      <div class="tile" style="background:var(--surface-2);border:0"><div class="lab">Ero</div><div class="val num {{ (mvm.brier_market - mvm.brier_model) | tone }}">{{ (mvm.brier_market - mvm.brier_model) | num(4) }}</div><div class="hint">{{ 'malli parempi' if mvm.brier_market > mvm.brier_model else 'markkina parempi' }}</div></div>
+    </div>
+    <p class="muted" style="font-size:.82rem;margin:8px 0">{{ mvm.n }} vetoa. Pienempi Brier on parempi.</p>
+    {% for g in mvm.groups %}
+    <div class="dbar"><div class="dbar-h"><span class="nm">{{ g.name }}<small>{{ g.n }}</small></span><span class="num {{ g.roi | tone }}">ROI {{ g.roi | pct(1, true) }}</span></div>
+      <div class="kv"><span>malli {{ g.model | pct(1) }}</span><span>markkina {{ g.market | pct(1) }}</span><span>toteuma <b>{{ g.actual | pct(1) }}</b></span></div></div>
+    {% endfor %}
+    {% if mvm.n < 100 %}<p class="muted" style="font-size:.82rem;margin:8px 0 0">Alle 100 vetoa - vasta suuntaa antava.</p>{% endif %}
+  {% else %}<div class="empty">Ei vielä ratkaistuja vetoja, joissa vastapuolen kerroin on kirjattu.</div>{% endif %}
+</section>
+
+{% if cal_saved %}
+<section class="card">
+  <div class="card-h"><h3>Kalibroitu ennuste (tallennettu)</h3><span class="sub">cal_prob</span></div>
+  <div class="tscroll"><table class="t"><thead><tr><th>Luokka</th><th>Vetoja</th><th>Ennuste</th><th>Toteuma</th><th>ROI</th></tr></thead><tbody>
+  {% for r in cal_saved.rows %}<tr><td>{{ r.bin }}</td><td>{{ r.n }}</td><td>{{ r.pred | pct(1) }}</td><td>{{ r.actual | pct(1) }}</td><td class="{{ r.roi | tone }}">{{ r.roi | pct(1, true) }}</td></tr>{% endfor %}
+  </tbody></table></div>
+  <p class="muted" style="font-size:.82rem;margin:8px 0 0">Kertoo osuuko kalibroitu Lyö/Älä lyö -ennuste: {{ cal_saved.n }} vetoa, Brier {{ cal_saved.brier | num(4) }}.</p>
+</section>
+{% endif %}
+
+<section class="card">
+  <details class="fold"><summary>Mitä kalibrointi on oppinut vedoistasi?</summary>
+  <pre style="white-space:pre-wrap;font:inherit;font-size:.85rem;color:var(--text-2);margin:0">{{ cal_text }}</pre></details>
+</section>

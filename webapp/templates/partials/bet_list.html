@@ -1,0 +1,15 @@
+{% if not groups %}
+  <div class="empty">{% if q %}Ei vetoja haulla “{{ q }}”.{% elif view == 'active' %}Ei vireillä olevia vetoja.{% else %}Ei ratkaistuja vetoja.{% endif %}</div>
+{% endif %}
+{% for g in groups %}
+<section class="daygroup">
+  <div class="dayh"><span>{{ g.day | pretty_day }}</span>
+    {% if g.settled %}<span class="num {{ g.profit | tone }}">{{ g.profit | eur }} · ROI {{ g.roi | pct(1, true) }}</span>{% else %}<span class="muted">{{ g.pending }} vireillä</span>{% endif %}
+  </div>
+  {% for b in g.bets %}{% include "partials/bet_card.html" %}{% endfor %}
+</section>
+{% endfor %}
+{% if more %}
+  <button class="btn block" type="button" hx-get="/bets/list?page={{ page + 1 }}" hx-include="#bets-controls" hx-target="#bet-list" hx-swap="innerHTML">Näytä lisää</button>
+{% endif %}
+<span id="counts-oob" hidden data-active="{{ counts.active }}" data-settled="{{ counts.settled }}"></span>

@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-h"><h1>Turnaukset</h1></div>
+<form class="card" hx-post="/tournaments" hx-target="#tlist" hx-swap="innerHTML" id="newt" autocomplete="off">
+  <div class="field"><span>Uusi turnaus</span>
+    <div style="display:grid;grid-template-columns:1fr auto;gap:8px"><input type="text" name="name" id="newt-name" placeholder="esim. IEM Cologne 2026" required><button class="btn primary" type="submit">Luo</button></div></div>
+</form>
+<div id="tlist" class="stack">{% include "partials/tournament_list.html" %}</div>
+{% endblock %}

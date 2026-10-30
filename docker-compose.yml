@@ -30,6 +30,22 @@ services:
       - "8501:8501"
     restart: unless-stopped
 
+  # --- Uusi käyttöliittymä (FastAPI + HTMX), toimii rinnakkain Streamlit-dashboardin kanssa ---
+  # Käyttää samoja tietokantoja (./data) ja samaa mallikoodia, joten vanha dashboard (portti 8501)
+  # toimii ennallaan. Uusi löytyy portista 8502.
+  webapp:
+    build:
+      context: .
+      dockerfile: webapp/Dockerfile
+    container_name: cs-webapp
+    environment:
+      - TZ=Europe/Helsinki
+    volumes:
+      - ./data:/app/db_data
+    ports:
+      - "8502:8502"
+    restart: unless-stopped
+
   # --- FlareSolverr: ratkaisee HLTV:n Cloudflare-suojauksen (Managed Challenge /
   # Turnstile) scraperin puolesta. Aktiivisesti ylläpidetty, tarkoitettu juuri
   # tähän käyttötarkoitukseen - paljon kestävämpi ratkaisu kuin käsin patchattu

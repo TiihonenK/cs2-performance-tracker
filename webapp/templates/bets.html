@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-h"><h1>Vedot</h1></div>
+<div id="bets-controls" class="stack" style="gap:10px">
+  <div class="seg" role="tablist">
+    <button type="button" class="{{ 'on' if view == 'active' }}" data-view="active">Vireillä <span class="badge" id="cnt-active">{{ counts.active }}</span></button>
+    <button type="button" class="{{ 'on' if view == 'settled' }}" data-view="settled">Ratkaistut <span class="badge" id="cnt-settled">{{ counts.settled }}</span></button>
+  </div>
+  <input type="hidden" name="view" id="bets-view" value="{{ view }}">
+  <input type="search" name="q" id="bets-q" value="{{ q }}" placeholder="Hae: pelaaja, joukkue, turnaus, kartta…" enterkeyhint="search">
+</div>
+<div id="bet-list" class="stack" hx-get="/bets/list" hx-include="#bets-controls" hx-trigger="betsChanged from:body, input from:#bets-q delay:300ms, viewchange from:body" hx-swap="innerHTML">
+  {% include "partials/bet_list.html" %}
+</div>
+{% endblock %}

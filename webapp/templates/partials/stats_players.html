@@ -1,0 +1,31 @@
+<section class="card">
+  <div class="field"><span>Pelaaja</span>
+    <select name="player" hx-get="/stats/players" hx-include="#sf" hx-target="#stats-content" hx-swap="innerHTML">
+      <option value="">Valitse pelaaja ({{ plist | length }})</option>
+      {% for p in plist %}<option value="{{ p.name }}" {{ 'selected' if p.name == player }}>{{ p.name }} · {{ p.n }} vetoa</option>{% endfor %}
+    </select></div>
+</section>
+{% if detail %}
+<section class="tile hero">
+  <div class="lab">{{ player }}</div>
+  <div class="val num {{ detail.summary.profit | tone }}">{{ detail.summary.profit | eur }}</div>
+  <div class="hint">ROI <b class="{{ detail.summary.roi | tone }}">{{ detail.summary.roi | pct(1, true) }}</b> · {{ detail.summary.n }} vetoa · {{ detail.summary.pending }} vireillä</div>
+</section>
+<div class="grid2">
+  {% for key, lab, cls in (('UNDER', 'Alle', 'under'), ('OVER', 'Yli', 'over')) %}
+  {% set d = detail.split[key] %}
+  <div class="tile"><div class="lab"><span class="chip {{ cls }}">{{ lab }}</span> · {{ d.n }} ({{ d.share | pct(0) }})</div>
+    <div class="val num">{{ d.hit | pct(1) if d.hit is not none else '–' }}</div><div class="hint">osuma, {{ d.decided }} ratkaistua</div></div>
+  {% endfor %}
+</div>
+{% if detail.equity and detail.equity['values'] | length > 1 %}
+<section class="card"><div class="card-h"><h3>Kassakäyrä</h3><span class="sub num {{ detail.equity.end | tone }}">{{ detail.equity.end | eur }}</span></div>
+  <div class="chartbox"><canvas data-chart="equity" data-payload='{{ detail.equity | tojson_attr }}' role="img" aria-label="Pelaajan kumulatiivinen tulos"></canvas></div></section>
+{% endif %}
+<section class="stack">
+  <h3 style="padding:0 4px">Viimeisimmät vedot</h3>
+  {% for b in recent %}{% include "partials/bet_card.html" %}{% endfor %}
+</section>
+{% elif not plist %}
+<div class="empty">Ei vetoja joissa pelaaja olisi tallessa.</div>
+{% endif %}

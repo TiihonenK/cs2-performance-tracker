@@ -1,0 +1,33 @@
+{% set st = b.status %}
+{% set profit = (b.stake * (b.odds - 1)) if st == 'Voitto' else (-b.stake if st == 'Tappio' else ((b.cashout_amount or 0) - b.stake if st == 'Cashout' else none)) %}
+<article class="bet{{ ' tap' if st != 'Odottaa' }}" id="bet-{{ b.id }}" {% if st != 'Odottaa' %}hx-get="/bets/{{ b.id }}/edit" hx-target="#sheet-body" hx-swap="innerHTML"{% endif %}>
+  <div class="bet-top">
+    <div style="min-width:0">
+      <div class="bet-title">
+        {% if b.player %}{{ b.player }} <span class="chip {{ 'under' if b.direction == 'UNDER' else 'over' }}">{{ 'Alle' if b.direction == 'UNDER' else 'Yli' }} {{ b.line | line_fmt }}</span>
+        {% else %}{{ b.description }}{% endif %}
+      </div>
+      <div class="bet-meta">
+        {% if b.team1 and b.team2 %}{{ b.team1 }} vs {{ b.team2 }} · {% endif %}{{ b.map or '' }}{% if b.map_pool %} · {{ b.map_pool }}{% endif %}
+      </div>
+      <div class="bet-meta"><span class="chip">{{ b.tournament }}</span></div>
+    </div>
+    <div class="bet-right">
+      {% if profit is not none %}
+        <div class="bet-profit num {{ profit | tone }}">{{ profit | eur }}</div>
+        <div class="bet-meta num">{{ b.stake | num(0) }} € @ {{ b.odds | num(2) }}</div>
+        <span class="chip {{ 'win' if st == 'Voitto' else ('loss' if st == 'Tappio' else 'warn') }}">{{ st }}</span>
+      {% else %}
+        <div class="bet-profit num">{{ b.stake | num(0) }} € @ {{ b.odds | num(2) }}</div>
+        <div class="bet-meta num">voitto {{ (b.stake * (b.odds - 1)) | eur }}</div>
+      {% endif %}
+    </div>
+  </div>
+  {% if st == 'Odottaa' %}
+  <div class="bet-actions">
+    <button class="btn win" type="button" hx-post="/bets/{{ b.id }}/status" hx-vals='{"status":"Voitto"}' hx-target="#bet-{{ b.id }}" hx-swap="outerHTML"><svg class="icon" style="width:18px;height:18px"><use href="#i-check"/></svg>Voitto</button>
+    <button class="btn loss" type="button" hx-post="/bets/{{ b.id }}/status" hx-vals='{"status":"Tappio"}' hx-target="#bet-{{ b.id }}" hx-swap="outerHTML"><svg class="icon" style="width:18px;height:18px"><use href="#i-x"/></svg>Tappio</button>
+    <button class="btn" type="button" aria-label="Muokkaa" hx-get="/bets/{{ b.id }}/edit" hx-target="#sheet-body" hx-swap="innerHTML"><svg class="icon"><use href="#i-more"/></svg></button>
+  </div>
+  {% endif %}
+</article>

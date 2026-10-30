@@ -1,0 +1,33 @@
+<div class="sheet-h">
+  <div><h2>{{ t.name }}</h2><div class="sec" style="font-size:.85rem">{{ t.status }} · {{ sm.n }} vetoa</div></div>
+  <button class="xbtn" type="button" data-close aria-label="Sulje"><svg class="icon"><use href="#i-x"/></svg></button>
+</div>
+<div class="stack">
+  <div class="grid3">
+    <div class="tile"><div class="lab">Tulos</div><div class="val num {{ sm.profit | tone }}">{{ sm.profit | eur(true, 0) }}</div></div>
+    <div class="tile"><div class="lab">ROI</div><div class="val num {{ sm.roi | tone }}">{{ sm.roi | pct(1, true) }}</div></div>
+    <div class="tile"><div class="lab">Osuma</div><div class="val num">{{ sm.hit | pct(0) if sm.hit is not none else '–' }}</div></div>
+  </div>
+  {% if equity and equity['values'] | length > 1 %}
+  <div class="chartbox"><canvas data-chart="equity" data-payload='{{ equity | tojson_attr }}' role="img" aria-label="Turnauksen kumulatiivinen tulos"></canvas></div>
+  {% endif %}
+  {% if groups %}
+  <h3>Päivä kerrallaan</h3>
+  {% for g in groups %}
+  <div class="dbar" style="grid-template-columns:1fr auto;align-items:baseline"><span class="nm" style="font-weight:600">{{ g.day | pretty_day }} <small class="muted">{{ g.bets | length }} vetoa</small></span>
+    <span class="num {{ g.profit | tone }}">{{ g.profit | eur }}{% if g.settled %} · {{ g.roi | pct(1, true) }}{% endif %}</span></div>
+  {% endfor %}
+  {% endif %}
+  <hr style="border:0;border-top:1px solid var(--line);width:100%">
+  <form hx-post="/tournaments/{{ t.id }}/rename" hx-target="#tlist" hx-swap="innerHTML" class="stack" style="gap:8px">
+    <div class="field"><span>Nimeä uudelleen / yhdistä <span class="muted">(olemassa olevaan nimeen yhdistää vedot)</span></span><input type="text" name="name" value="{{ t.name }}" required></div>
+    <button class="btn block" type="submit">Tallenna nimi</button>
+  </form>
+  <form hx-post="/tournaments/{{ t.id }}/status" hx-target="#tlist" hx-swap="innerHTML">
+    <input type="hidden" name="status" value="{{ 'Suljettu' if t.status == 'Aktiivinen' else 'Aktiivinen' }}">
+    <button class="btn block" type="submit">{{ 'Siirrä historiaan' if t.status == 'Aktiivinen' else 'Palauta aktiiviseksi' }}</button>
+  </form>
+  {% if sm.n == 0 %}
+  <button class="btn block danger" type="button" hx-post="/tournaments/{{ t.id }}/delete" hx-confirm="Poistetaanko turnaus pysyvästi?" hx-target="#tlist" hx-swap="innerHTML">Poista turnaus</button>
+  {% else %}<p class="muted" style="font-size:.82rem;margin:0">Poisto on mahdollinen vasta kun turnauksella ei ole vetoja.</p>{% endif %}
+</div>

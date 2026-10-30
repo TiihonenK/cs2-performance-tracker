@@ -1,0 +1,27 @@
+{% if not ev %}<div class="banner err">Pelaajaa ei löytynyt.</div>{% else %}
+<div class="stack" style="gap:10px">
+  <div class="eval-stats">
+    <div><div class="lab">{{ 'Yli' if ev.direction == 'OVER' else 'Alle' }} {{ ev.line | line_fmt }}</div><div class="val num">{{ (ev.model_p * 100) | pct(1) }}</div></div>
+    <div><div class="lab">Reilu kerroin</div><div class="val num">{{ ev.fair_odds | num(2) if ev.fair_odds else '–' }}</div></div>
+    <div><div class="lab">{{ 'Alle' if ev.direction == 'OVER' else 'Yli' }} {{ ev.line | line_fmt }}</div><div class="val num">{{ ((ev.p_under if ev.direction == 'OVER' else ev.p_over) * 100) | pct(1) }}</div></div>
+  </div>
+  <div class="histwrap"><canvas data-chart="hist" data-payload='{{ {"x": ev.hist.x, "p": ev.hist.p, "side": ev.hist.side, "dir": ev.direction, "line": ev.line} | tojson_attr }}' role="img" aria-label="Tappojakauma"></canvas></div>
+  {% if ev.market %}
+  <div class="kv"><span>Markkina (marginaali {{ ev.market.margin | num(1) }} % poistettu) <b>{{ (ev.market.p * 100) | pct(1) }}</b></span><span>Malli vs markkina <b class="{{ ev.market.diff | tone }}">{{ ev.market.diff | pct(1, true) }}-yks.</b></span></div>
+  {% endif %}
+  {% if ev.verdict %}
+  <div class="verdict {{ 'ok' if ev.verdict.ok else 'no' }}">
+    <div class="verdict-t"><svg class="icon"><use href="#{{ 'i-check' if ev.verdict.ok else 'i-x' }}"/></svg>{{ 'Lyö' if ev.verdict.ok else 'Älä lyö' }}</div>
+    <p>{{ ev.verdict.why }}</p>
+    <p class="sec" style="font-size:.82rem">
+      {% if ev.verdict.min_odds %}Pienin kerroin jolla EV ylittää {{ ev.verdict.min_ev | num(0) }} %: <b>{{ ev.verdict.min_odds | num(2) }}</b>.{% else %}Millään järkevällä kertoimella tämä ei ole arvoveto (tyypillisesti pieni turnaus / karsinta).{% endif %}
+      {% if ev.verdict.ok %} Neljäsosa-Kelly: <b>{{ ev.verdict.kelly_quarter | num(2) }} %</b> kassasta. Kalibroitu todennäköisyys on arvio ja yläpäässä liian optimistinen - harkitse tasapanosta.{% endif %}
+    </p>
+  </div>
+  {% endif %}
+  {% if n_map >= max_per_map %}
+  <div class="banner warn"><svg class="icon" style="width:20px;height:20px"><use href="#i-alert"/></svg><div>Kartalla {{ kartta }} on jo {{ n_map }} vireillä olevaa vetoa ({{ n_same }} samaan suuntaan). Saman kartan vedot voittavat ja häviävät yhdessä (kierrosmäärä, jatkoaika) - valitse enintään {{ max_per_map }} parasta.</div></div>
+  {% endif %}
+  {% if ev.calib_text %}<details class="fold"><summary style="font-weight:550;font-size:.85rem;color:var(--text-2)">Mitä kalibrointi on oppinut vedoistasi?</summary><pre style="white-space:pre-wrap;font:inherit;font-size:.82rem;color:var(--text-2);margin:0">{{ ev.calib_text }}</pre></details>{% endif %}
+</div>
+{% endif %}

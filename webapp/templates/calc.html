@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-h"><h1>Laske veto</h1></div>
+
+<datalist id="teams">{% for t in teams %}<option value="{{ t }}">{% endfor %}</datalist>
+
+<section class="card">
+  <details class="fold" id="pin-fold">
+    <summary>Tuo Pinnaclen kertoimet (JSON)</summary>
+    <div class="stack">
+      <textarea name="text" id="pin-text" placeholder='{"matches": [{"team1": "...", "team2": "...", "maps": [{"map": "Kartta 1", "odds1": 1.85, "odds2": 1.95, "total_line": 21.5, "over_odds": 1.9, "under_odds": 1.9}]}]}'></textarea>
+      <button class="btn" type="button" hx-post="/pinnacle" hx-include="#pin-text" hx-target="#pin-list">Lue JSON</button>
+      <div id="pin-list"></div>
+    </div>
+  </details>
+</section>
+
+<form class="card stack" id="calc-form" hx-post="/calc" hx-target="#result" hx-swap="innerHTML" hx-indicator="#calc-spin" autocomplete="off">
+  <div class="form-grid">
+    <div class="field"><span>Joukkue 1</span><input type="text" name="team1" id="f-team1" list="teams" placeholder="Joukkue" autocapitalize="off" autocorrect="off" spellcheck="false" required></div>
+    <div class="field"><span>Kerroin</span><input type="number" name="odds1" id="f-odds1" value="1.85" min="1.01" step="0.01" inputmode="decimal"></div>
+    <div class="field"><span>Joukkue 2</span><input type="text" name="team2" id="f-team2" list="teams" placeholder="Joukkue" autocapitalize="off" autocorrect="off" spellcheck="false" required></div>
+    <div class="field"><span>Kerroin</span><input type="number" name="odds2" id="f-odds2" value="1.85" min="1.01" step="0.01" inputmode="decimal"></div>
+  </div>
+  <button type="button" class="btn sm ghost" id="swap-teams" style="align-self:flex-start"><svg class="icon" style="width:18px;height:18px"><use href="#i-swap"/></svg>Vaihda puolet</button>
+
+  <div class="field"><span>Kartta</span>
+    <div class="seg" id="f-kartta">
+      {% for i in range(1, 6) %}<input type="radio" name="kartta" id="k{{ i }}" value="Kartta {{ i }}" {{ 'checked' if i == 1 }}><label for="k{{ i }}">{{ i }}</label>{% endfor %}
+    </div>
+  </div>
+  <div class="field"><span>Kartan nimi</span>
+    <select name="map_name" id="f-mapname"><option value="">Ei tiedossa</option>{% for m in map_names %}<option>{{ m }}</option>{% endfor %}</select>
+  </div>
+
+  <details class="fold">
+    <summary>Pinnaclen kierrostotal (valinnainen)</summary>
+    <div class="form-grid">
+      <div class="field full"><span>Kierrosraja (0 = ei käytössä)</span><input type="number" name="total_line" id="f-total" value="0" min="0" max="40" step="0.5" inputmode="decimal"></div>
+      <div class="field"><span>Kerroin YLI</span><input type="number" name="total_over" id="f-over" value="0" min="0" step="0.01" inputmode="decimal"></div>
+      <div class="field"><span>Kerroin ALLE</span><input type="number" name="total_under" id="f-under" value="0" min="0" step="0.01" inputmode="decimal"></div>
+    </div>
+  </details>
+
+  <button class="btn primary block" type="submit"><span id="calc-spin" class="htmx-indicator spin"></span>Laske arviot</button>
+</form>
+
+<div id="result" class="stack"></div>
+{% endblock %}

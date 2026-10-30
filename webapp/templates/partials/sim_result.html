@@ -1,0 +1,38 @@
+<section class="card matchhead">
+  <div class="vs"><span>{{ s.t1 }}</span><small>vs</small><span class="t2">{{ s.t2 }}</span></div>
+  <div class="probbar" role="img" aria-label="Voittotodennäköisyydet"><i style="width:{{ (s.p1 * 100) | round(1) }}%"></i><i style="width:{{ (s.p2 * 100) | round(1) }}%"></i></div>
+  <div class="kv" style="justify-content:space-between"><span><b>{{ (s.p1 * 100) | round(1) | string | replace('.', ',') }} %</b></span><span><b>{{ (s.p2 * 100) | round(1) | string | replace('.', ',') }} %</b></span></div>
+  <div class="kv">
+    <span>Kesto <b>{{ s.median_rounds | num(1) }}</b> kierrosta <span class="muted">({{ 'Pinnaclen totalista' if s.anchored else 'mallin arvio' }})</span></span>
+    <span>Jatkoaika <b>{{ (s.p_ot * 100) | pct(0) }}</b></span>
+    <span>{{ s.kartta }}{% if s.map_name %} · <b>{{ s.map_name }}</b>{% endif %}</span>
+  </div>
+  <details class="fold" style="margin-top:2px">
+    <summary style="font-weight:550;font-size:.85rem;color:var(--text-2)">Käytetyt korjaukset</summary>
+    <div class="kv" style="flex-direction:column;gap:4px">
+      <span>Kartta: {% if s.map_name %}<b>{{ s.map_name }}</b> (kerroin ×{{ s.map_factor | num(3) }}){% else %}ei valittu, ei karttakorjausta{% endif %}</span>
+      <span>Vertailutaso vastustajan sallimille tapoille: {{ s.league | num(2) }} tappoa/kierros</span>
+      <span>{{ s.t2 }}: {% if s.opp1 is none %}ei tarpeeksi dataa{% else %}antaa {{ s.opp1 | num(2) }} → {{ s.adj1 | num(2) | replace('-', '−') if s.adj1 < 0 else '+' ~ (s.adj1 | num(2)) }} tappoa/kartta pelaajille {{ s.t1 }}{% endif %}</span>
+      <span>{{ s.t1 }}: {% if s.opp2 is none %}ei tarpeeksi dataa{% else %}antaa {{ s.opp2 | num(2) }} → {{ s.adj2 | num(2) | replace('-', '−') if s.adj2 < 0 else '+' ~ (s.adj2 | num(2)) }} tappoa/kartta pelaajille {{ s.t2 }}{% endif %}</span>
+      <span>Simuloitu kierrosjako: {{ s.t1 }} {{ s.t1_rounds | num(1) }} – {{ s.t2_rounds | num(1) }} {{ s.t2 }}</span>
+    </div>
+  </details>
+</section>
+
+<p class="muted" style="margin:0 4px;font-size:.85rem">Napauta pelaajaa kirjataksesi veto.</p>
+
+{% for team, plist in ((s.t1, s.t1_players), (s.t2, s.t2_players)) %}
+<section class="card flush">
+  <div class="team-h"><h2>{{ team }}</h2><span class="muted" style="font-size:.78rem">Ennuste · malli</span></div>
+  {% for p in plist %}
+  <button class="prow" type="button" hx-get="/sim/{{ sid }}/player" hx-vals='{{ {"name": p.name} | tojson_attr }}' hx-target="#sheet-body" hx-swap="innerHTML">
+    <div class="prow-top"><span class="prow-name">{{ p.name }}</span><span class="prow-proj num">{{ p.proj | num(1) }}</span></div>
+    <div class="prow-sub"><span class="nw">KPR {{ p.kpr | num(2) }} · {{ p.form }}</span><span class="nw">Linja <b class="num">{{ p.line | line_fmt }}</b></span></div>
+    <div class="pmini"><span class="num">Alle {{ p.p_under | num(0) }} %</span>
+      <div class="probbar"><i style="width:{{ p.p_under }}%"></i><i style="width:{{ p.p_over }}%"></i></div>
+      <span class="num">{{ p.p_over | num(0) }} % Yli</span></div>
+  </button>
+  {% endfor %}
+</section>
+{% endfor %}
+<script>document.getElementById('result').scrollIntoView({behavior:'smooth', block:'start'});</script>

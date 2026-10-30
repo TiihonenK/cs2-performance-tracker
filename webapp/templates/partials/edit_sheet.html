@@ -1,0 +1,30 @@
+<form hx-post="/bets/{{ bet.id }}" hx-swap="none" autocomplete="off">
+  <div class="sheet-h">
+    <div><h2>Muokkaa vetoa</h2><div class="sec" style="font-size:.85rem">#{{ bet.id }} · {{ bet.status }}</div></div>
+    <button class="xbtn" type="button" data-close aria-label="Sulje"><svg class="icon"><use href="#i-x"/></svg></button>
+  </div>
+  <datalist id="teams-e">{% for t in teams %}<option value="{{ t }}">{% endfor %}</datalist>
+  <div class="form-grid">
+    <div class="field full"><span>Pelaaja</span><input type="text" name="player" value="{{ bet.player or '' }}" autocapitalize="off" autocorrect="off"></div>
+    <div class="field"><span>Joukkue 1</span><input type="text" name="team1" value="{{ bet.team1 or '' }}" list="teams-e"></div>
+    <div class="field"><span>Joukkue 2</span><input type="text" name="team2" value="{{ bet.team2 or '' }}" list="teams-e"></div>
+    <div class="field full"><span>Suunta</span>
+      <div class="seg dir"><input type="radio" name="direction" id="e-under" value="UNDER" {{ 'checked' if bet.direction == 'UNDER' }}><label for="e-under">Alle</label><input type="radio" name="direction" id="e-over" value="OVER" {{ 'checked' if bet.direction != 'UNDER' }}><label for="e-over">Yli</label></div></div>
+    <div class="field"><span>Linja</span><input type="number" name="line" value="{{ bet.line if bet.line is not none else 14.5 }}" step="0.5" inputmode="decimal"></div>
+    <div class="field"><span>Panos (€)</span><input type="number" name="stake" value="{{ bet.stake }}" min="1" step="1" inputmode="decimal"></div>
+    <div class="field"><span>Kerroin</span><input type="number" name="odds" value="{{ bet.odds }}" min="1.01" step="0.01" inputmode="decimal"></div>
+    <div class="field"><span>Vastapuolen kerroin <span class="muted">(0 = ei)</span></span><input type="number" name="opp_odds" value="{{ bet.opp_odds or 0 }}" min="0" step="0.01" inputmode="decimal"></div>
+    <div class="field"><span>Turnaus</span><select name="tournament">{% for t in tournaments %}<option {{ 'selected' if t == bet.tournament }}>{{ t }}</option>{% endfor %}</select></div>
+    <div class="field"><span>Päivämäärä</span><input type="date" name="bet_date" value="{{ bet_date }}"></div>
+    <div class="field"><span>Kartta</span><select name="map_label">{% for i in range(1, 6) %}<option {{ 'selected' if bet.map == 'Kartta ' ~ i }}>Kartta {{ i }}</option>{% endfor %}</select></div>
+    <div class="field"><span>Kartan nimi</span><select name="map_pool"><option value="">Ei tiedossa</option>{% for m in map_names %}<option {{ 'selected' if bet.map_pool == m }}>{{ m }}</option>{% endfor %}</select></div>
+    <div class="field"><span>Tila</span>
+      <select name="status">{% for s in ['Odottaa', 'Voitto', 'Tappio', 'Cashout'] %}<option {{ 'selected' if s == bet.status }}>{{ s }}</option>{% endfor %}</select></div>
+    <div class="field"><span>Cashout-summa (€)</span><input type="number" name="cashout_amount" value="{{ bet.cashout_amount or 0 }}" min="0" step="1" inputmode="decimal"></div>
+  </div>
+  <div class="stack" style="margin-top:16px">
+    <button class="btn primary block" type="submit" name="action" value="save">Tallenna</button>
+    {% if bet.status == 'Odottaa' %}<button class="btn block" type="submit" name="action" value="cashout">Cashout (käytä yllä olevaa summaa)</button>{% endif %}
+    <button class="btn block danger" type="button" hx-post="/bets/{{ bet.id }}/delete" hx-confirm="Poistetaanko veto pysyvästi?" hx-swap="none">Poista veto</button>
+  </div>
+</form>

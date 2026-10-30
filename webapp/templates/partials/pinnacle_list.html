@@ -1,0 +1,7 @@
+{% for it in items %}
+<button type="button" class="pin-item" data-fill='{{ it | tojson_attr }}'>
+  <b>{{ it.t1 }} vs {{ it.t2 }}</b> · {{ it.map }}
+  <small>{{ it.odds1 if it.odds1 is not none else '–' }} / {{ it.odds2 if it.odds2 is not none else '–' }}{% if it.total %} · total {{ it.total }}{% endif %}</small>
+  {% if it.missing %}<small style="color:var(--warn)">Ei kannassa: {{ it.missing | join(', ') }} (valitse käsin)</small>{% endif %}
+</button>
+{% endfor %}

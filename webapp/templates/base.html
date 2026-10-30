@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="fi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#1a1a19">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Vetomalli">
+<title>{% block title %}CS2 Vetomalli{% endblock %}</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/static/icon-180.png">
+<script>
+  try { var t = localStorage.getItem('theme'); if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t); } catch (e) {}
+</script>
+<link rel="stylesheet" href="/static/app.css?v={{ v }}">
+<script src="/static/htmx.min.js" defer></script>
+<script src="/static/chart.umd.js" defer></script>
+<script src="/static/app.js?v={{ v }}" defer></script>
+</head>
+<body hx-boost="false">
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-calc" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3.5"/><path d="M12 1.5v4M12 18.5v4M1.5 12h4M18.5 12h4"/></symbol>
+  <symbol id="i-bets" viewBox="0 0 24 24"><rect x="5" y="3.5" width="14" height="17.5" rx="2.5"/><path d="M9 3.5h6v3H9zM9 12h6M9 16h4"/></symbol>
+  <symbol id="i-stats" viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></symbol>
+  <symbol id="i-trophy" viewBox="0 0 24 24"><path d="M8 4h8v6a4 4 0 0 1-8 0V4zM8 6H4.5v1.5A3.5 3.5 0 0 0 8 11M16 6h3.5v1.5A3.5 3.5 0 0 1 16 11M12 14v4M8.5 20.5h7"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+  <symbol id="i-swap" viewBox="0 0 24 24"><path d="M7 4L3 8l4 4M3 8h14M17 20l4-4-4-4M21 16H7"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3.5L2.5 20h19L12 3.5zM12 10v4.5M12 17.5v.01"/></symbol>
+</svg>
+
+<header class="topbar"><div class="topbar-in">
+  <div class="brand"><span class="brand-dot"></span>Vetomalli</div>
+  <span class="spacer"></span>
+  {% if stale %}
+    <a class="chip warn" href="/" title="HLTV-datan tuorein kartta: {{ latest or 'tuntematon' }}">
+      <svg class="icon" style="width:14px;height:14px"><use href="#i-alert"/></svg>
+      Data {{ age if age is not none else '?' }} pv vanha
+    </a>
+  {% else %}
+    <span class="chip" title="Tuorein kartta {{ latest }}">Data {{ age }} pv</span>
+  {% endif %}
+  <button class="themebtn" id="themebtn" type="button" aria-label="Vaihda teemaa"><svg class="icon"><use href="#i-moon"/></svg></button>
+</div></header>
+
+<main class="page" id="main">{% block content %}{% endblock %}</main>
+
+<nav class="nav" aria-label="Päävalikko"><div class="nav-in">
+  <a href="/" class="{{ 'on' if active == 'calc' }}"><svg class="icon"><use href="#i-calc"/></svg>Laske</a>
+  <a href="/bets" class="{{ 'on' if active == 'bets' }}"><svg class="icon"><use href="#i-bets"/></svg>Vedot</a>
+  <a href="/stats" class="{{ 'on' if active == 'stats' }}"><svg class="icon"><use href="#i-stats"/></svg>Tilastot</a>
+  <a href="/tournaments" class="{{ 'on' if active == 'tournaments' }}"><svg class="icon"><use href="#i-trophy"/></svg>Turnaukset</a>
+</div></nav>
+
+<dialog id="sheet" aria-label="Lisätiedot">
+  <div class="sheet-grab"></div>
+  <div class="sheet-in" id="sheet-body"></div>
+</dialog>
+<div id="toasts" aria-live="polite"></div>
+</body>
+</html>

@@ -1,0 +1,17 @@
+{% macro tcard(r) %}
+<button type="button" class="card tcard" style="text-align:left;width:100%;cursor:pointer" hx-get="/tournaments/{{ r.t.id }}" hx-target="#sheet-body" hx-swap="innerHTML">
+  <div class="tcard-main"><div class="nm">{{ r.t.name }}</div>
+    <div class="muted" style="font-size:.8rem">{{ r.sm.n }} vetoa{% if r.sm.pending %} · {{ r.sm.pending }} vireillä{% endif %}{% if r.sm.settled %} · ROI {{ r.sm.roi | pct(1, true) }}{% endif %}</div></div>
+  {% if r.spark %}
+    {% set lo = r.spark | min %}{% set hi = r.spark | max %}{% set rng = (hi - lo) or 1.0 %}{% set n = r.spark | length %}
+    <svg class="spark" viewBox="0 0 84 30" preserveAspectRatio="none" aria-hidden="true"><polyline fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+      points="{% for v in r.spark %}{{ (loop.index0 / ((n - 1) or 1) * 82 + 1) | round(1) }},{{ (28 - (v - lo) / rng * 26) | round(1) }} {% endfor %}"/></svg>
+  {% endif %}
+  <div style="text-align:right;flex:none"><div class="num" style="font-weight:700"><span class="{{ r.sm.profit | tone }}">{{ r.sm.profit | eur }}</span></div></div>
+</button>
+{% endmacro %}
+{% set active = rows | selectattr('t.status', 'equalto', 'Aktiivinen') | list %}
+{% set closed = rows | selectattr('t.status', 'equalto', 'Suljettu') | list %}
+<h3 style="padding:0 4px">Aktiiviset</h3>
+{% for r in active %}{{ tcard(r) }}{% else %}<div class="empty">Ei aktiivisia turnauksia.</div>{% endfor %}
+{% if closed %}<h3 style="padding:8px 4px 0">Historia</h3>{% for r in closed %}{{ tcard(r) }}{% endfor %}{% endif %}

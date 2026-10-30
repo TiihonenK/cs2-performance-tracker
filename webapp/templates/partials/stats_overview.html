@@ -1,0 +1,81 @@
+<section class="tile hero">
+  <div class="lab">Tulos{{ '' }}</div>
+  <div class="val num {{ sm.profit | tone }}">{{ sm.profit | eur }}</div>
+  <div class="hint">ROI <b class="{{ sm.roi | tone }}">{{ sm.roi | pct(1, true) }}</b> · panostettu {{ sm.staked | eur(false, 0) }} · {{ sm.settled }} ratkaistua</div>
+</section>
+<div class="grid3">
+  <div class="tile"><div class="lab">Osuma</div><div class="val num">{{ sm.hit | pct(1) }}</div><div class="hint">kerroin vaatii {{ sm.breakeven | pct(1) }}</div></div>
+  <div class="tile"><div class="lab">Keskikerroin</div><div class="val num">{{ sm.avg_odds | num(2) }}</div><div class="hint">{{ sm.decided }} vetoa</div></div>
+  <div class="tile"><div class="lab">Vireillä</div><div class="val num">{{ sm.pending }}</div><div class="hint">&nbsp;</div></div>
+</div>
+
+<div class="grid-wide">
+{% if equity %}
+<section class="card span2">
+  <div class="card-h"><h3>Kassakäyrä</h3><span class="sub num {{ equity.end | tone }}">{{ equity.end | eur }}</span></div>
+  <div class="chartbox"><canvas data-chart="equity" data-payload='{{ equity | tojson_attr }}' role="img" aria-label="Kumulatiivinen tulos euroina"></canvas></div>
+  {% if monthly %}<details class="tablefold"><summary>Näytä kuukausittain taulukkona</summary>
+    <div class="tscroll"><table class="t"><thead><tr><th>Kuukausi</th><th>Vetoja</th><th>ROI</th><th>Tulos</th></tr></thead><tbody>
+    {% for m in monthly %}<tr><td>{{ m.month }}</td><td>{{ m.n }}</td><td>{{ m.roi | pct(1, true) }}</td><td class="{{ m.profit | tone }}">{{ m.profit | eur }}</td></tr>{% endfor %}
+    </tbody></table></div></details>{% endif %}
+</section>
+{% endif %}
+
+{% if daily %}
+<section class="card">
+  <div class="card-h"><h3>Päivän tulos</h3><span class="sub">viimeiset {{ daily.days | length }} pelipäivää</span></div>
+  <div class="chartbox"><canvas data-chart="daily" data-payload='{{ daily | tojson_attr }}' role="img" aria-label="Päiväkohtainen tulos euroina"></canvas></div>
+  <details class="tablefold"><summary>Näytä taulukkona</summary>
+    <div class="tscroll"><table class="t"><thead><tr><th>Päivä</th><th>Vetoja</th><th>ROI</th><th>Tulos</th></tr></thead><tbody>
+    {% for i in range(daily.days | length - 1, -1, -1) %}<tr><td>{{ daily.days[i][5:] }}</td><td>{{ daily.n[i] }}</td><td>{{ daily.roi[i] | pct(1, true) }}</td><td class="{{ daily['values'][i] | tone }}">{{ daily['values'][i] | eur }}</td></tr>{% endfor %}
+    </tbody></table></div></details>
+</section>
+{% endif %}
+
+{% if directions %}
+<section class="card">
+  <div class="card-h"><h3>Alle vs. Yli</h3><span class="sub">osuma vs. kertoimen vaatima</span></div>
+  <div class="grid2">
+  {% for d in directions %}
+    <div class="tile" style="background:var(--surface-2);border:0">
+      <div class="lab"><span class="chip {{ 'under' if d.name == 'UNDER' else 'over' }}">{{ 'Alle' if d.name == 'UNDER' else 'Yli' }}</span> · {{ d.n }} vetoa</div>
+      <div class="val num">{{ d.hit | pct(1) }}</div>
+      <div class="hint">vaaditaan {{ d.breakeven | pct(1) }}</div>
+      <div class="hint">ROI <b class="{{ d.roi | tone }}">{{ d.roi | pct(1, true) }}</b> · {{ d.profit | eur }}</div>
+    </div>
+  {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+{% if tournaments %}
+<section class="card">
+  <div class="card-h"><h3>ROI turnauksittain</h3><span class="sub">uusin ylhäällä</span></div>
+  {% set mx = ([1.0] + (tournaments | map(attribute='roi') | map('abs') | list)) | max %}
+  {% for t in tournaments %}
+  <div class="dbar"><div class="dbar-h"><span class="nm">{{ t.name }}<small>{{ t.n }}</small></span><span class="num {{ t.roi | tone }}">{{ t.roi | pct(1, true) }}</span></div>
+    <div class="dtrack" aria-hidden="true"><i class="dfill {{ 'p' if t.roi >= 0 else 'n' }}" style="width:{{ (t.roi | abs) / mx * 50 }}%"></i></div></div>
+  {% endfor %}
+</section>
+{% endif %}
+
+{% if odds %}
+<section class="card">
+  <div class="card-h"><h3>ROI kertoimen mukaan</h3><span class="sub">vetojen määrä nimen vieressä</span></div>
+  {% set mx2 = ([1.0] + (odds | map(attribute='roi') | map('abs') | list)) | max %}
+  {% for o in odds %}
+  <div class="dbar"><div class="dbar-h"><span class="nm">{{ o.name }}<small>{{ o.n }}</small></span><span class="num {{ o.roi | tone }}">{{ o.roi | pct(1, true) }}</span></div>
+    <div class="dtrack" aria-hidden="true"><i class="dfill {{ 'p' if o.roi >= 0 else 'n' }}" style="width:{{ (o.roi | abs) / mx2 * 50 }}%"></i></div></div>
+  {% endfor %}
+</section>
+{% endif %}
+
+{% if rolling %}
+<section class="card span2">
+  <div class="card-h"><h3>Osuma vs. kertoimen vaatima</h3><span class="sub">liukuva {{ rolling.window }} vedon keskiarvo</span></div>
+  <div class="legend"><span><i style="background:var(--series-a)"></i>Toteutunut osuma</span><span><i style="background:var(--series-b)"></i>Kertoimen vaatima</span></div>
+  <div class="chartbox"><canvas data-chart="rolling" data-payload='{{ rolling | tojson_attr }}' role="img" aria-label="Liukuva osuma-% ja kertoimen vaatima osuma-%"></canvas></div>
+  <p class="muted" style="margin:8px 0 0;font-size:.82rem">Jos sininen viiva on oranssin alapuolella, vedot ovat tappiollisia: kertoimet ovat lyhentyneet nopeammin kuin osumaprosentti on noussut.</p>
+</section>
+{% endif %}
+</div>
