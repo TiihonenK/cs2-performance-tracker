@@ -145,7 +145,7 @@ def clean_records(df):
 # ---------------------------------------------------------------------------
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request):
-    return render(request, "calc.html", teams=db.team_names(), map_names=MAP_NAMES,
+    return render(request, "calc.html", teams=db.team_names(), map_names=db.current_map_pool(MAP_NAMES),
                   tournaments=db.active_tournament_names(), **page_ctx("calc"))
 
 
@@ -331,7 +331,10 @@ def bet_edit(request: Request, bet_id: int):
     if bet.get("tournament") not in tournaments:
         tournaments.insert(0, bet.get("tournament"))
     bet_date = (bet.get("date") or "")[:10]
-    return render(request, "partials/edit_sheet.html", bet=bet, tournaments=tournaments, map_names=MAP_NAMES,
+    pool = db.current_map_pool(MAP_NAMES)
+    if bet.get("map_pool") and bet["map_pool"] not in pool:
+        pool = sorted(pool + [bet["map_pool"]])  # vanha veto: säilytä sen oma kartta valittavana
+    return render(request, "partials/edit_sheet.html", bet=bet, tournaments=tournaments, map_names=pool,
                   bet_date=bet_date, teams=db.team_names())
 
 

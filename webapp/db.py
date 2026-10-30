@@ -68,6 +68,41 @@ def team_names():
         return []
 
 
+POOL_SIZE = 7
+_pool_cache = {"key": None, "maps": None}
+
+
+def current_map_pool(fallback=()):
+    """Aktiivinen karttapooli: 7 viimeksi pelattua eri karttaa hltv-datasta.
+
+    Kartta lasketaan mukaan vain jos sitä on pelattu vähintään 5 kertaa datan
+    viimeisen 120 päivän aikana (suojaa yksittäisiltä poikkeaviltä riveiltä).
+    Tulos aakkosjärjestyksessä. Jos dataa ei ole, palautetaan fallback.
+    """
+    try:
+        key = os.path.getmtime(HLTV_DB)
+    except OSError:
+        return list(fallback)
+    if _pool_cache["key"] == key and _pool_cache["maps"]:
+        return list(_pool_cache["maps"])
+    maps = []
+    try:
+        with connect(HLTV_DB, readonly=True) as conn:
+            rows = conn.execute(
+                """SELECT map_name, MAX(match_date) AS last, COUNT(*) FROM matches
+                   WHERE match_date > '2020' AND map_name IS NOT NULL AND map_name != ''
+                     AND match_date >= date((SELECT MAX(match_date) FROM matches WHERE match_date > '2020'), '-120 days')
+                   GROUP BY map_name HAVING COUNT(*) >= 5
+                   ORDER BY last DESC LIMIT ?""", (POOL_SIZE,)).fetchall()
+        maps = sorted(r[0] for r in rows)
+    except sqlite3.Error:
+        maps = []
+    if len(maps) < 4:
+        maps = list(fallback)
+    _pool_cache.update(key=key, maps=maps)
+    return list(maps)
+
+
 def data_freshness():
     """(tuorein kartta 'YYYY-MM-DD' | None, ikä päivinä | None)."""
     try:

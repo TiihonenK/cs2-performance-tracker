@@ -58,7 +58,7 @@ def run(team1, team2, odds1, odds2, kartta, map_name=None, total_line=0.0, total
     t2_players = get_team_players_overall_stats(team2)
     opp1, _ = get_team_kills_allowed(team2)
     opp2, _ = get_team_kills_allowed(team1)
-    map_model = map_name if map_name in MAP_NAMES else None
+    map_model = map_name if map_name in MAP_KILL_FACTORS else None
     t1_sim = simulate_team_kills(t1_players, ctx["rounds"], ctx["share_t1"], opp_allowed=opp1, map_name=map_model)
     t2_sim = simulate_team_kills(t2_players, ctx["rounds"], ctx["share_t2"], opp_allowed=opp2, map_name=map_model)
 
