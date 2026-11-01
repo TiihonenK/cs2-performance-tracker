@@ -253,6 +253,55 @@
     });
   }
   window.renderCharts = renderCharts;
+
+  /* ---------- Pinnaclen JSON: viimeisin tallentuu laitteelle ---------- */
+  var PIN_KEY = 'pin_json', PIN_TS = 'pin_json_ts', pinRestoring = false;
+  function pinStatus() {
+    var items = $$('#pin-list .pin-item').length, ts = store(PIN_TS);
+    var cnt = $('#pin-count'), meta = $('#pin-meta'), clr = $('#pin-clear'), has = !!store(PIN_KEY);
+    if (cnt) { cnt.hidden = !items; cnt.textContent = items ? String(items) : ''; }
+    if (clr) clr.hidden = !has && !($('#pin-text') || {}).value;
+    if (meta) {
+      meta.hidden = !has;
+      if (has) {
+        var when = '';
+        if (ts) { var d = new Date(parseInt(ts, 10)); when = ' · tallennettu ' + d.getDate() + '.' + (d.getMonth() + 1) + '. klo ' + ('0' + d.getHours()).slice(-2) + '.' + ('0' + d.getMinutes()).slice(-2); }
+        meta.textContent = 'Viimeisin JSON on tallessa tälle laitteelle' + when + '. Uusi JSON korvaa sen.';
+      }
+    }
+  }
+  function pinRestore() {
+    var ta = $('#pin-text'); if (!ta) return;
+    var saved = store(PIN_KEY);
+    if (saved && !ta.value.trim()) {
+      ta.value = saved; pinRestoring = true;
+      var btn = $('#pin-read'); if (btn && window.htmx) htmx.trigger(btn, 'click');
+    }
+    pinStatus();
+  }
+  document.body.addEventListener('htmx:afterSwap', function (e) {
+    var t = e.detail.target;
+    if (!t || t.id !== 'pin-list') return;
+    var ta = $('#pin-text');
+    if (ta && ta.value.trim() && $('.pin-item', t)) {
+      store(PIN_KEY, ta.value);
+      if (!pinRestoring) store(PIN_TS, String(Date.now()));
+    }
+    pinRestoring = false;
+    pinStatus();
+  });
+  document.addEventListener('click', function (e) {
+    if (!e.target.closest('#pin-clear')) return;
+    var ta = $('#pin-text'), l = $('#pin-list');
+    if (ta) ta.value = ''; if (l) l.innerHTML = '';
+    try { localStorage.removeItem(PIN_KEY); localStorage.removeItem(PIN_TS); } catch (err) { /* ei tallennusta */ }
+    pinStatus(); toast({ msg: 'Pinnaclen JSON tyhjennetty' });
+  });
+  (function () { var ta = $('#pin-text'); if (ta) ta.addEventListener('input', pinStatus); })();
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function () { setTimeout(pinRestore, 0); });
+  else setTimeout(pinRestore, 0);
+  window.addEventListener('pageshow', function (e) { if (e.persisted) pinRestore(); });
+
   document.body.addEventListener('htmx:load', function (e) { renderCharts(e.detail.elt); });
   window.addEventListener('load', function () { renderCharts(document); });
 })();

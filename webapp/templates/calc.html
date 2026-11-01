@@ -6,10 +6,14 @@
 
 <section class="card">
   <details class="fold" id="pin-fold">
-    <summary>Tuo Pinnaclen kertoimet (JSON)</summary>
+    <summary>Tuo Pinnaclen kertoimet (JSON) <span class="badge" id="pin-count" hidden></span></summary>
     <div class="stack">
       <textarea name="text" id="pin-text" placeholder='{"matches": [{"team1": "...", "team2": "...", "maps": [{"map": "Kartta 1", "odds1": 1.85, "odds2": 1.95, "total_line": 21.5, "over_odds": 1.9, "under_odds": 1.9}]}]}'></textarea>
-      <button class="btn" type="button" hx-post="/pinnacle" hx-include="#pin-text" hx-target="#pin-list">Lue JSON</button>
+      <div class="row" style="display:flex;gap:8px">
+        <button class="btn" id="pin-read" type="button" hx-post="/pinnacle" hx-include="#pin-text" hx-target="#pin-list" style="flex:1">Lue JSON</button>
+        <button class="btn ghost" id="pin-clear" type="button" hidden>Tyhjennä</button>
+      </div>
+      <small class="muted" id="pin-meta" hidden></small>
       <div id="pin-list"></div>
     </div>
   </details>
