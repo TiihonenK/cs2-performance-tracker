@@ -91,6 +91,7 @@
       set('f-total', d.total || 0); set('f-over', d.over || 0); set('f-under', d.under || 0);
       var m = (d.map || '').match(/(\d)/); if (m) { var r = document.getElementById('k' + m[1]); if (r) r.checked = true; }
       set('f-mapname', '');
+      calcSave();
       var fold = $('#pin-fold'); if (fold) fold.open = false;
       toast({ msg: 'Ladattu: ' + d.t1 + ' vs ' + d.t2 + (d.map ? ' · ' + d.map : '') });
       return;
@@ -114,6 +115,7 @@
     ['team', 'odds'].forEach(function (k) {
       var a = $('#f-' + k + '1'), b = $('#f-' + k + '2'), t = a.value; a.value = b.value; b.value = t;
     });
+    calcSave();
   });
   function updateCounts() {
     var c = $('#counts-oob'); if (!c) return;
@@ -253,6 +255,64 @@
     });
   }
   window.renderCharts = renderCharts;
+
+  /* ---------- Laske-sivu muistaa valitun ottelun ja tuloksen ---------- */
+  var CALC_FORM = 'calc_form', CALC_RES = 'calc_result', RES_TTL = 6 * 3600 * 1000;
+  var CALC_FIELDS = ['team1', 'team2', 'odds1', 'odds2', 'map_name', 'total_line', 'total_over', 'total_under'];
+  function calcSave() {
+    var f = $('#calc-form'); if (!f) return;
+    var o = {};
+    CALC_FIELDS.forEach(function (n) { var el = f.elements[n]; if (el) o[n] = el.value; });
+    var r = f.querySelector('input[name="kartta"]:checked'); if (r) o.kartta = r.value;
+    store(CALC_FORM, JSON.stringify(o));
+    var clr = $('#calc-clear'); if (clr) clr.hidden = !(o.team1 || o.team2);
+  }
+  function calcRestore() {
+    var f = $('#calc-form'); if (!f) return;
+    var o = null; try { o = JSON.parse(store(CALC_FORM) || 'null'); } catch (e) { o = null; }
+    if (o) {
+      CALC_FIELDS.forEach(function (n) {
+        var el = f.elements[n]; if (!el || o[n] === undefined || o[n] === null) return;
+        if (el.tagName === 'SELECT' && !$$('option', el).some(function (op) { return (op.value || op.text) === o[n]; })) return;
+        el.value = o[n];
+      });
+      if (o.kartta) { var r = f.querySelector('input[name="kartta"][value="' + o.kartta + '"]'); if (r) r.checked = true; }
+    }
+    var res = $('#result'), saved = null;
+    try { saved = JSON.parse(store(CALC_RES) || 'null'); } catch (e) { saved = null; }
+    if (res && !res.children.length && saved && saved.html && Date.now() - saved.ts < RES_TTL) {
+      res.innerHTML = saved.html;
+      if (window.htmx) htmx.process(res);
+      renderCharts(res);
+    }
+    calcSave();
+  }
+  function calcClear() {
+    var f = $('#calc-form'); if (!f) return;
+    ['team1', 'team2'].forEach(function (n) { f.elements[n].value = ''; });
+    ['odds1', 'odds2'].forEach(function (n) { f.elements[n].value = '1.85'; });
+    ['total_line', 'total_over', 'total_under'].forEach(function (n) { f.elements[n].value = '0'; });
+    f.elements.map_name.value = '';
+    var r1 = $('#k1'); if (r1) r1.checked = true;
+    var res = $('#result'); if (res) res.innerHTML = '';
+    try { localStorage.removeItem(CALC_FORM); localStorage.removeItem(CALC_RES); } catch (e) { /* ei tallennusta */ }
+    calcSave();
+  }
+  (function () {
+    var f = $('#calc-form'); if (!f) return;
+    f.addEventListener('input', calcSave); f.addEventListener('change', calcSave);
+    var clr = $('#calc-clear'); if (clr) clr.addEventListener('click', calcClear);
+    document.body.addEventListener('htmx:afterSwap', function (e) {
+      var t = e.detail.target;
+      if (!t || t.id !== 'result') return;
+      if (t.querySelector('.matchhead')) store(CALC_RES, JSON.stringify({ html: t.innerHTML, ts: Date.now() }));
+      else { try { localStorage.removeItem(CALC_RES); } catch (err) { /* ei tallennusta */ } }
+      calcSave();
+    });
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function () { setTimeout(calcRestore, 0); });
+    else setTimeout(calcRestore, 0);
+    window.addEventListener('pageshow', function (e) { if (e.persisted) calcRestore(); });
+  })();
 
   /* ---------- Pinnaclen JSON: viimeisin tallentuu laitteelle ---------- */
   var PIN_KEY = 'pin_json', PIN_TS = 'pin_json_ts', pinRestoring = false;

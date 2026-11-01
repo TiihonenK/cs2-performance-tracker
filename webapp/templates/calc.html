@@ -26,7 +26,10 @@
     <div class="field"><span>Joukkue 2</span><input type="text" name="team2" id="f-team2" list="teams" placeholder="Joukkue" autocapitalize="off" autocorrect="off" spellcheck="false" required></div>
     <div class="field"><span>Kerroin</span><input type="number" name="odds2" id="f-odds2" value="1.85" min="1.01" step="any" inputmode="decimal"></div>
   </div>
-  <button type="button" class="btn sm ghost" id="swap-teams" style="align-self:flex-start"><svg class="icon" style="width:18px;height:18px"><use href="#i-swap"/></svg>Vaihda puolet</button>
+  <div style="display:flex;gap:8px;flex-wrap:wrap">
+    <button type="button" class="btn sm ghost" id="swap-teams"><svg class="icon" style="width:18px;height:18px"><use href="#i-swap"/></svg>Vaihda puolet</button>
+    <button type="button" class="btn sm ghost" id="calc-clear" hidden>Tyhjennä ottelu</button>
+  </div>
 
   <div class="field"><span>Kartta</span>
     <div class="seg" id="f-kartta">
