@@ -88,6 +88,9 @@ def run(team1, team2, odds1, odds2, kartta, map_name=None, total_line=0.0, total
     return _put(sim), sim
 
 
+MODEL_WEIGHT = 0.30    # kuinka paljon mallin arvio painaa historiasuodattimen rinnalla (ennakko, ei datasta)
+MODEL_CAP = 0.15       # malli voi siirtää todennäköisyyttä enintään tämän verran historiasta
+MODEL_OUTLIER = 0.20   # malli ja historia näin kaukana toisistaan -> varoitus
 MODEL_P_FLOOR = 0.44   # pienin mallin arvio jonka kalibroinnin aineistossa on (0,5 %-persentiili)
 
 _cal_cache = {"mtime": None, "cal": None}
@@ -103,6 +106,26 @@ def get_calibration():
         _cal_cache["cal"] = bc.fit_calibration(db.BETS_DB)
         _cal_cache["mtime"] = m
     return _cal_cache["cal"]
+
+
+def _combined(model_p, odds, direction, tournament, cal):
+    """Historiasuodatin (kalibroitu osuma) + mallin arvio -> (yhdistetty p, EV, historia-p, paino).
+
+    Mallille ei saatu datasta painoa (sovituksessa 0,00 +- 0,28), joten se saa varovaisen
+    ennakkopainon MODEL_WEIGHT ja sen vaikutus rajataan +-MODEL_CAP:iin. Jos kalibrointi
+    oppii itse käyttämään mallia (paino > 0), se on jo mukana historia-p:ssä eikä lisätä uudelleen."""
+    cal_p, _ = bc.calibrated_probability(model_p, odds, direction, tournament, cal)
+    w = MODEL_WEIGHT if abs(float(cal["coef"][4])) < 1e-9 else 0.0
+    m_cap = min(max(model_p, cal_p - MODEL_CAP), cal_p + MODEL_CAP)
+    p = cal_p + w * (m_cap - cal_p)
+    return p, p * odds - 1.0, cal_p, w
+
+
+def _min_odds(model_p, direction, tournament, cal):
+    for o in np.arange(1.30, 3.01, 0.01):
+        if _combined(model_p, float(o), direction, tournament, cal)[1] >= bc.MIN_EV:
+            return round(float(o), 2)
+    return None
 
 
 def evaluate(sim, player, direction, line, odds, opp_odds=None, tournament=None):
@@ -134,23 +157,38 @@ def evaluate(sim, player, direction, line, odds, opp_odds=None, tournament=None)
 
     if odds and odds > 1:
         cal = get_calibration()
-        ok, cal_p, cal_ev, why = bc.bet_verdict(model_p, odds, direction, tournament, cal)
-        min_o = bc.min_odds_for_value(model_p, direction, tournament, cal)
-        # Kalibrointi on sovitettu vetoihin joissa mallin arvio oli ~44-79 %. Sen tuomio ei päde
-        # kauas mallin omasta linjasta: kun mallin todennäköisyys on sen alapuolella, ei lyödä.
+        comb_p, comb_ev, cal_p, w = _combined(model_p, odds, direction, tournament, cal)
+        _, hist_ev = bc.calibrated_probability(model_p, odds, direction, tournament, cal)
+        breakeven = 1.0 / odds
+        min_o = _min_odds(model_p, direction, tournament, cal)
+        gap = model_p - cal_p
+        # Kalibrointi on sovitettu vetoihin joissa mallin arvio oli ~44-79 %. Alle sen malli
+        # sanoo itse ettei veto osu: ei lyödä.
         out_of_range = model_p < MODEL_P_FLOOR
+        ok = (comb_ev >= bc.MIN_EV) and not out_of_range
         if out_of_range:
-            ok, min_o = False, None
+            min_o = None
             why = (f"Malli arvioi osumatodennäköisyydeksi vain {model_p * 100:.1f} %. Kalibrointi on "
                    f"sovitettu vetoihin joissa mallin arvio oli vähintään {MODEL_P_FLOOR * 100:.0f} %, "
-                   f"joten sen tuomio ei päde näin kaukana mallin omasta linjasta.")
-        out["verdict"] = dict(ok=ok, cal_p=cal_p, ev=cal_ev, why=why, min_odds=min_o,
-                              min_ev=bc.MIN_EV * 100, breakeven=1 / odds * 100,
+                   f"joten tuomio ei päde näin kaukana mallin omasta linjasta.")
+        elif ok:
+            why = (f"Yhdistetty osumatodennäköisyys {comb_p * 100:.1f} % (historia {cal_p * 100:.1f} %, "
+                   f"malli {model_p * 100:.1f} %) > kertoimen vaatima {breakeven * 100:.1f} % "
+                   f"→ EV {comb_ev * 100:+.1f} %.")
+        else:
+            why = (f"Yhdistetty osumatodennäköisyys {comb_p * 100:.1f} % (historia {cal_p * 100:.1f} %, "
+                   f"malli {model_p * 100:.1f} %), kerroin vaatii {breakeven * 100:.1f} % "
+                   f"→ EV {comb_ev * 100:+.1f} % (raja {bc.MIN_EV * 100:+.0f} %).")
+            if bc.is_small_event(tournament):
+                why += " Pienissä turnauksissa / karsinnoissa vetosi ovat hävinneet selvästi."
+        out["verdict"] = dict(ok=ok, cal_p=cal_p, comb_p=comb_p, ev=comb_ev, hist_ev=hist_ev, why=why,
+                              min_odds=min_o, min_ev=bc.MIN_EV * 100, breakeven=breakeven * 100,
                               small=bc.is_small_event(tournament), out_of_range=out_of_range,
-                              blind=abs(float(cal["coef"][4])) < 1e-9)
+                              model_weight=w, gap=gap * 100, outlier=abs(gap) > MODEL_OUTLIER,
+                              capped=abs(gap) > MODEL_CAP)
         if ok:
             b = odds - 1.0
-            kelly = (cal_p * b - (1 - cal_p)) / b
+            kelly = (comb_p * b - (1 - comb_p)) / b
             out["verdict"]["kelly_quarter"] = max(kelly * 25, 0.0)
         out["calib_text"] = bc.describe(cal)
     return out

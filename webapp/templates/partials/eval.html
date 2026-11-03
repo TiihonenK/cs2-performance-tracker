@@ -15,9 +15,12 @@
     <p>{{ ev.verdict.why }}</p>
     <p class="sec" style="font-size:.82rem">
       {% if ev.verdict.out_of_range %}{% elif ev.verdict.min_odds %}Pienin kerroin jolla EV ylittää {{ ev.verdict.min_ev | num(0) }} %: <b>{{ ev.verdict.min_odds | odds_fmt }}</b>.{% else %}Millään järkevällä kertoimella tämä ei ole arvoveto (tyypillisesti pieni turnaus / karsinta).{% endif %}
-      {% if ev.verdict.ok %} Neljäsosa-Kelly: <b>{{ ev.verdict.kelly_quarter | num(2) }} %</b> kassasta. Kalibroitu todennäköisyys on arvio ja yläpäässä liian optimistinen - harkitse tasapanosta.{% endif %}
+      {% if ev.verdict.ok %} Neljäsosa-Kelly: <b>{{ ev.verdict.kelly_quarter | num(2) }} %</b> kassasta. Todennäköisyys on arvio ja yläpäässä liian optimistinen - harkitse tasapanosta.{% endif %}
     </p>
-    {% if ev.verdict.blind and not ev.verdict.out_of_range %}<p class="sec" style="font-size:.82rem">Huom: kalibrointi ei käytä tappomallin lukua (paino 0,00). Tuomio perustuu vain kertoimeen, suuntaan ja turnaukseen eli siihen, miten vastaavat vedot ovat historiassa osuneet. Mallin {{ (ev.model_p * 100) | pct(1) }} ei vaikuta siihen.</p>{% endif %}
+    {% if not ev.verdict.out_of_range %}
+    <p class="sec" style="font-size:.82rem">Tuomio yhdistää historian (miten vastaavat vedot ovat osuneet kertoimellasi) ja mallin tälle linjalle. Malli saa painon {{ (ev.verdict.model_weight * 100) | num(0) }} % ja sen vaikutus on rajattu ±15 %-yks.: datasta ei vielä voi päätellä, kuinka paljon mallin luku kannattaa uskoa, joten paino on varovainen oletus.</p>
+    {% if ev.verdict.outlier %}<p class="sec" style="font-size:.82rem;color:var(--warn)"><b>Tarkista ennen vetoa:</b> malli ({{ (ev.model_p * 100) | pct(1) }}) ja historia ({{ (ev.verdict.cal_p * 100) | pct(1) }}) eroavat {{ ev.verdict.gap | abs | num(0) }} %-yks. Näin suuri ero johtuu yleensä datasta tai tiedosta jota malli ei näe (rooli, kokoonpano, väärä kartta tai linja eri kohteelle), ei bookkerin virheestä.</p>{% endif %}
+    {% endif %}
   </div>
   {% endif %}
   {% if n_map >= max_per_map %}
