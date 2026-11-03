@@ -77,7 +77,8 @@ def run(team1, team2, odds1, odds2, kartta, map_name=None, total_line=0.0, total
 
     sim = dict(
         t1=team1, t2=team2, p1=prob1, p2=prob2, kartta=kartta, map_name=map_model, anchored=anchored,
-        median_rounds=ctx["median_rounds"], p_ot=ctx["p_overtime"],
+        median_rounds=ctx["median_rounds"], mean_rounds=ctx["mean_rounds"], p_ot=ctx["p_overtime"],
+        total_line=ctx["total_line"], market_p_over=ctx["market_p_over"], model_p_over=ctx["model_p_over"],
         t1_rounds=float((ctx["rounds"] * ctx["share_t1"]).mean()),
         t2_rounds=float((ctx["rounds"] * ctx["share_t2"]).mean()),
         opp1=opp1, opp2=opp2, adj1=adj1 * 21.6, adj2=adj2 * 21.6, map_factor=mf,

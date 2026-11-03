@@ -3,7 +3,8 @@
   <div class="probbar" role="img" aria-label="Voittotodennäköisyydet"><i style="width:{{ (s.p1 * 100) | round(1) }}%"></i><i style="width:{{ (s.p2 * 100) | round(1) }}%"></i></div>
   <div class="kv" style="justify-content:space-between"><span><b>{{ (s.p1 * 100) | round(1) | string | replace('.', ',') }} %</b></span><span><b>{{ (s.p2 * 100) | round(1) | string | replace('.', ',') }} %</b></span></div>
   <div class="kv">
-    <span>Kesto <b>{{ s.median_rounds | num(1) }}</b> kierrosta <span class="muted">({{ 'Pinnaclen totalista' if s.anchored else 'mallin arvio' }})</span></span>
+    <span>Kesto <b>{{ s.mean_rounds | num(1) }}</b> kierrosta <span class="muted">(keskiarvo{{ '' if s.anchored else ', mallin arvio' }})</span></span>
+    {% if s.anchored %}<span>Yli {{ s.total_line | line_fmt | replace('.', ',') }} <b>{{ (s.model_p_over * 100) | pct(1) }}</b> <span class="muted">(markkina {{ (s.market_p_over * 100) | pct(1) }})</span></span>{% endif %}
     <span>Jatkoaika <b>{{ (s.p_ot * 100) | pct(0) }}</b></span>
     <span>{{ s.kartta }}{% if s.map_name %} · <b>{{ s.map_name }}</b>{% endif %}</span>
   </div>

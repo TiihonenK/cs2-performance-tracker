@@ -256,8 +256,15 @@ def simulate_match_context(win_prob, num_simulations=10000,
     simulate_team_kills-kutsuille, jotta pelaajat pelaavat saman simuloidun
     ottelun samassa simulaatiokierroksessa.
     """
-    rng = np.random.default_rng(seed)
+    anchored = total_line is not None
+    # Ankkuroidussa ajossa käytetään kiinteää siementä (0, ellei toista anneta) JA samaa
+    # otoskokoa kuin virityksessä. Silloin lopullinen otos on käytännössä sama kuin
+    # viritykseen käytetty, ja P(kierroksia > linja) osuu markkinan lukuun eikä heilahtele
+    # Monte Carlo -kohinan mukaan (ilman tätä mediaani hyppäsi 21 <-> 22 kun linja oli 21,5
+    # ja P(yli) lähellä 50 %). Sama syöte antaa nyt myös aina saman tuloksen.
+    rng = np.random.default_rng(0 if (anchored and seed is None) else seed)
     r_mid = round_prob_from_map_prob(win_prob)
+    market_p_over = None
 
     # ANKKUROINTI MARKKINAAN. Jos Pinnacle (tai muu terävä kirja) tarjoaa kartalle
     # kierrostotalin, se on parempi arvio kestosta kuin mikään historiaan sovitettu
@@ -269,12 +276,13 @@ def simulate_match_context(win_prob, num_simulations=10000,
     # Tarkin tapa on antaa linja JA molemmat kertoimet: silloin marginaali poistetaan
     # ja simulaatio viritetään osumaan markkinan todelliseen P(yli)-arvioon.
     # Pelkkä linja tulkitaan mediaaniksi (P(yli) = 50 %).
-    if total_line is not None:
+    if anchored:
         if total_over_odds and total_under_odds and total_over_odds > 1 and total_under_odds > 1:
             p_over, _p_under, _margin = devig_two_way(total_over_odds, total_under_odds)
         else:
             p_over = 0.5
-        sigma_within = _sigma_for_total_line(r_mid, float(total_line), p_over, seed or 0)
+        market_p_over = float(p_over)
+        sigma_within = _sigma_for_total_line(r_mid, float(total_line), p_over, seed or 0, n=num_simulations)
     elif target_mean_rounds is not None:
         sigma_within = _sigma_for_target_mean(r_mid, float(target_mean_rounds), seed or 0)
 
@@ -294,6 +302,9 @@ def simulate_match_context(win_prob, num_simulations=10000,
         'p10': float(np.percentile(total, 10)),
         'p90': float(np.percentile(total, 90)),
         'sigma_within': float(sigma_within),
+        'total_line': (float(total_line) if anchored else None),
+        'market_p_over': market_p_over,
+        'model_p_over': (float((total > float(total_line)).mean()) if anchored else None),
     }
 
 
