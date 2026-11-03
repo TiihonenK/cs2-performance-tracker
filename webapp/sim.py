@@ -88,6 +88,8 @@ def run(team1, team2, odds1, odds2, kartta, map_name=None, total_line=0.0, total
     return _put(sim), sim
 
 
+MODEL_P_FLOOR = 0.44   # pienin mallin arvio jonka kalibroinnin aineistossa on (0,5 %-persentiili)
+
 _cal_cache = {"mtime": None, "cal": None}
 
 
@@ -134,9 +136,18 @@ def evaluate(sim, player, direction, line, odds, opp_odds=None, tournament=None)
         cal = get_calibration()
         ok, cal_p, cal_ev, why = bc.bet_verdict(model_p, odds, direction, tournament, cal)
         min_o = bc.min_odds_for_value(model_p, direction, tournament, cal)
+        # Kalibrointi on sovitettu vetoihin joissa mallin arvio oli ~44-79 %. Sen tuomio ei päde
+        # kauas mallin omasta linjasta: kun mallin todennäköisyys on sen alapuolella, ei lyödä.
+        out_of_range = model_p < MODEL_P_FLOOR
+        if out_of_range:
+            ok, min_o = False, None
+            why = (f"Malli arvioi osumatodennäköisyydeksi vain {model_p * 100:.1f} %. Kalibrointi on "
+                   f"sovitettu vetoihin joissa mallin arvio oli vähintään {MODEL_P_FLOOR * 100:.0f} %, "
+                   f"joten sen tuomio ei päde näin kaukana mallin omasta linjasta.")
         out["verdict"] = dict(ok=ok, cal_p=cal_p, ev=cal_ev, why=why, min_odds=min_o,
                               min_ev=bc.MIN_EV * 100, breakeven=1 / odds * 100,
-                              small=bc.is_small_event(tournament))
+                              small=bc.is_small_event(tournament), out_of_range=out_of_range,
+                              blind=abs(float(cal["coef"][4])) < 1e-9)
         if ok:
             b = odds - 1.0
             kelly = (cal_p * b - (1 - cal_p)) / b

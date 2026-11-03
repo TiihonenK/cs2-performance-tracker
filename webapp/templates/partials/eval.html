@@ -14,9 +14,10 @@
     <div class="verdict-t"><svg class="icon"><use href="#{{ 'i-check' if ev.verdict.ok else 'i-x' }}"/></svg>{{ 'Lyö' if ev.verdict.ok else 'Älä lyö' }}</div>
     <p>{{ ev.verdict.why }}</p>
     <p class="sec" style="font-size:.82rem">
-      {% if ev.verdict.min_odds %}Pienin kerroin jolla EV ylittää {{ ev.verdict.min_ev | num(0) }} %: <b>{{ ev.verdict.min_odds | odds_fmt }}</b>.{% else %}Millään järkevällä kertoimella tämä ei ole arvoveto (tyypillisesti pieni turnaus / karsinta).{% endif %}
+      {% if ev.verdict.out_of_range %}{% elif ev.verdict.min_odds %}Pienin kerroin jolla EV ylittää {{ ev.verdict.min_ev | num(0) }} %: <b>{{ ev.verdict.min_odds | odds_fmt }}</b>.{% else %}Millään järkevällä kertoimella tämä ei ole arvoveto (tyypillisesti pieni turnaus / karsinta).{% endif %}
       {% if ev.verdict.ok %} Neljäsosa-Kelly: <b>{{ ev.verdict.kelly_quarter | num(2) }} %</b> kassasta. Kalibroitu todennäköisyys on arvio ja yläpäässä liian optimistinen - harkitse tasapanosta.{% endif %}
     </p>
+    {% if ev.verdict.blind and not ev.verdict.out_of_range %}<p class="sec" style="font-size:.82rem">Huom: kalibrointi ei käytä tappomallin lukua (paino 0,00). Tuomio perustuu vain kertoimeen, suuntaan ja turnaukseen eli siihen, miten vastaavat vedot ovat historiassa osuneet. Mallin {{ (ev.model_p * 100) | pct(1) }} ei vaikuta siihen.</p>{% endif %}
   </div>
   {% endif %}
   {% if n_map >= max_per_map %}
