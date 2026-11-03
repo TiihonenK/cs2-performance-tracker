@@ -130,6 +130,9 @@ select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.o
 input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent; }
 .form-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
 .form-grid .full { grid-column: 1 / -1; }
+.stakerow { display: flex; gap: 8px; }
+.stakerow input { flex: 1 1 auto; min-width: 0; }
+.stakerow .btn { flex: none; min-width: 54px; padding: 0 12px; font-variant-numeric: tabular-nums; }
 .stepper { display: grid; grid-template-columns: 46px 1fr 46px; gap: 6px; }
 .stepper .btn { padding: 0; font-size: 1.3rem; }
 .stepper input { text-align: center; font-weight: 600; }

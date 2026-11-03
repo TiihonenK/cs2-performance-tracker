@@ -58,10 +58,9 @@
     var t = e.detail.target;
     if (t && t.id === 'sheet-body') {
       openSheet();
-      var st = $('#s-stake'), tn = $('#s-tournament');
-      if (st && store('stake')) st.value = store('stake');
+      var tn = $('#s-tournament');
       if (tn && store('tournament')) { var v = store('tournament'); $$('option', tn).forEach(function (o) { if (o.value === v) tn.value = v; }); }
-      if (st) st.dispatchEvent(new Event('input', { bubbles: true }));
+      if (tn) tn.dispatchEvent(new Event('input', { bubbles: true }));
     }
     if (t && t.id === 'bet-list') updateCounts();
   });
@@ -69,12 +68,18 @@
     var c = e.target.closest('[data-close]'); if (c) closeSheet();
   });
   document.addEventListener('change', function (e) {
-    if (e.target.id === 's-stake') store('stake', e.target.value);
     if (e.target.id === 's-tournament') store('tournament', e.target.value);
   });
 
   /* ---------- Pienet apurit ---------- */
   document.addEventListener('click', function (e) {
+    var ad = e.target.closest('[data-add]');
+    if (ad) {   /* panoksen pikanapit: lisäävät nykyiseen panokseen (1 + 1 = 2) */
+      var si = document.getElementById(ad.dataset.target); if (!si) return;
+      si.value = Math.round(((parseFloat(si.value) || 0) + parseFloat(ad.dataset.add)) * 100) / 100;
+      si.dispatchEvent(new Event('input', { bubbles: true }));
+      return;
+    }
     var s = e.target.closest('[data-step]');
     if (s) {
       var inp = document.getElementById(s.dataset.target); if (!inp) return;
