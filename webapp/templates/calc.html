@@ -35,6 +35,7 @@
     <div class="seg" id="f-kartta">
       {% for i in range(1, 6) %}<input type="radio" name="kartta" id="k{{ i }}" value="Kartta {{ i }}" {{ 'checked' if i == 1 }}><label for="k{{ i }}">{{ i }}</label>{% endfor %}
     </div>
+    <small class="muted" id="pin-note" hidden></small>
   </div>
   <div class="field"><span>Kartan nimi</span>
     <select name="map_name" id="f-mapname"><option value="">Ei tiedossa</option>{% for m in map_names %}<option>{{ m }}</option>{% endfor %}</select>

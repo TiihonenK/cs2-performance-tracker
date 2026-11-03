@@ -187,16 +187,23 @@ def pinnacle(request: Request, text: str = Form("")):
         return render(request, "partials/error.html", problems=[f"JSON ei kelpaa: {e}"])
     items = []
     for m in matches:
-        for mp in m.get("maps", []):
-            t1, t2 = m.get("team1", ""), m.get("team2", "")
-            items.append(dict(t1=t1, t2=t2, map=mp.get("map", ""), odds1=mp.get("odds1"),
-                              odds2=mp.get("odds2"), total=mp.get("total_line"),
-                              over=mp.get("over_odds"), under=mp.get("under_odds"),
-                              missing=[t for t in (t1, t2) if t not in teams]))
+        if not isinstance(m, dict):
+            continue
+        t1, t2 = m.get("team1", ""), m.get("team2", "")
+        maps = {}
+        for mp in m.get("maps", []) or []:
+            mo = re.search(r"(\d)", str(mp.get("map", "")))
+            if not mo:
+                continue
+            maps[mo.group(1)] = dict(odds1=mp.get("odds1"), odds2=mp.get("odds2"), total=mp.get("total_line"),
+                                     over=mp.get("over_odds"), under=mp.get("under_odds"))
+        items.append(dict(t1=t1, t2=t2, key=f"{t1} vs {t2}", maps=maps, map_list=", ".join(sorted(maps)),
+                          has_total=any(v.get("total") for v in maps.values()),
+                          missing=[t for t in (t1, t2) if t not in teams]))
     if not items:
         return render(request, "partials/error.html",
                       problems=['JSON:sta ei löytynyt yhtään ottelua ("matches"-lista puuttuu tai on tyhjä).'])
-    return render(request, "partials/pinnacle_list.html", items=items)
+    return render(request, "partials/pinnacle_list.html", matches=items)
 
 
 @app.get("/sim/{sid}/player", response_class=HTMLResponse)

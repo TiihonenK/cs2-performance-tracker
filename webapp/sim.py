@@ -186,6 +186,10 @@ def evaluate(sim, player, direction, line, odds, opp_odds=None, tournament=None)
                               small=bc.is_small_event(tournament), out_of_range=out_of_range,
                               model_weight=w, gap=gap * 100, outlier=abs(gap) > MODEL_OUTLIER,
                               capped=abs(gap) > MODEL_CAP)
+        # Näytettävät luvut: yhdistetty arvio. Jos malli itse arvioi osuman alle rajan (punainen
+        # tuomio sen takia), näytetään mallin oma luku, jotta luvut selittävät värin.
+        out["verdict"]["show_p"] = model_p if out_of_range else comb_p
+        out["verdict"]["show_ev"] = (model_p * odds - 1.0) if out_of_range else comb_ev
         if ok:
             b = odds - 1.0
             kelly = (comb_p * b - (1 - comb_p)) / b

@@ -188,6 +188,8 @@ details.fold[open] > summary { margin-bottom: 12px; }
 
 .pin-item { display: block; width: 100%; text-align: left; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); cursor: pointer; margin-top: 8px; }
 .pin-item small { color: var(--muted); display: block; }
+.pin-item.on { border-color: var(--accent); background: var(--accent-wash); }
+#pin-note.warnnote { color: var(--warn); }
 
 /* ---------- Sheet ---------- */
 dialog#sheet { border: 0; padding: 0; background: var(--surface); color: var(--text); width: 100%; max-width: 100%;
@@ -202,11 +204,13 @@ dialog#sheet::backdrop { background: rgba(0,0,0,.45); backdrop-filter: blur(2px)
 .xbtn { width: 38px; height: 38px; border-radius: 50%; border: 0; background: var(--surface-2); color: var(--text-2); display: grid; place-items: center; cursor: pointer; flex: none; }
 @media (min-width: 720px) { dialog#sheet { max-width: 560px; margin: auto; border-radius: 22px; } }
 
-.verdict { border-radius: 14px; padding: 14px; display: flex; flex-direction: column; gap: 4px; }
+.verdict { border-radius: 14px; padding: 12px 14px; display: grid; grid-template-columns: auto repeat(3, minmax(0, 1fr)); gap: 10px; align-items: center; }
 .verdict.ok { background: var(--pos-bg); } .verdict.no { background: var(--neg-bg); }
-.verdict-t { font-weight: 700; font-size: 1.15rem; display: flex; align-items: center; gap: 8px; }
-.verdict.ok .verdict-t { color: var(--pos); } .verdict.no .verdict-t { color: var(--neg); }
-.verdict p { margin: 0; font-size: .88rem; color: var(--text); }
+.verdict .vi { width: 26px; height: 26px; }
+.verdict.ok .vi, .verdict.ok .val { color: var(--pos); } .verdict.no .vi, .verdict.no .val { color: var(--neg); }
+.verdict .lab { font-size: .72rem; color: var(--text-2); white-space: nowrap; }
+.verdict .val { font-weight: 700; font-size: 1.2rem; font-variant-numeric: tabular-nums; }
+.banner.mapcount { align-items: center; font-weight: 600; } .banner.mapcount span { flex: 1; } .banner.mapcount b { font-size: 1.2rem; }
 .histwrap { height: 168px; position: relative; }
 .eval-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .eval-stats div { background: var(--surface-2); border-radius: 12px; padding: 8px 10px; }

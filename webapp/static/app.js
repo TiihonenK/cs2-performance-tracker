@@ -88,19 +88,8 @@
       inp.dispatchEvent(new Event('input', { bubbles: true }));
       return;
     }
-    var f = e.target.closest('[data-fill]');
-    if (f) {
-      var d = JSON.parse(f.dataset.fill);
-      function set(id, v) { var el = document.getElementById(id); if (el && v !== null && v !== undefined) el.value = v; }
-      set('f-team1', d.t1); set('f-team2', d.t2); set('f-odds1', d.odds1); set('f-odds2', d.odds2);
-      set('f-total', d.total || 0); set('f-over', d.over || 0); set('f-under', d.under || 0);
-      var m = (d.map || '').match(/(\d)/); if (m) { var r = document.getElementById('k' + m[1]); if (r) r.checked = true; }
-      set('f-mapname', '');
-      calcSave();
-      var fold = $('#pin-fold'); if (fold) fold.open = false;
-      toast({ msg: 'Ladattu: ' + d.t1 + ' vs ' + d.t2 + (d.map ? ' · ' + d.map : '') });
-      return;
-    }
+    var pm = e.target.closest('[data-match]');
+    if (pm) { var md = null; try { md = JSON.parse(pm.dataset.match); } catch (err) { md = null; } if (md) pinSelect(md); return; }
     var v = e.target.closest('[data-view]');
     if (v) {
       $$('[data-view]').forEach(function (b) { b.classList.toggle('on', b === v); });
@@ -120,7 +109,7 @@
     ['team', 'odds'].forEach(function (k) {
       var a = $('#f-' + k + '1'), b = $('#f-' + k + '2'), t = a.value; a.value = b.value; b.value = t;
     });
-    calcSave();
+    if (pinSel) applyPin(); else calcSave();
   });
   function updateCounts() {
     var c = $('#counts-oob'); if (!c) return;
@@ -261,6 +250,65 @@
   }
   window.renderCharts = renderCharts;
 
+  /* ---------- Pinnaclen otteluvalinta: kartan kertoimet haetaan valitun kartan mukaan ---------- */
+  var pinWanted = '';  // tallennettu valinta, joka odottaa JSON:n palautumista
+  var pinSel = null;   // valittu ottelu {t1, t2, key, maps: {"1": {odds1, odds2, total, over, under}, ...}}
+  function pinNorm(s) { return String(s || '').trim().toLowerCase(); }
+  function curMapNo() { var r = $('#calc-form input[name="kartta"]:checked'); var m = r && r.value.match(/(\d)/); return m ? m[1] : null; }
+  function pinOrient() {   // 1 = samassa järjestyksessä kuin JSON:ssa, -1 = vaihdettu, 0 = eri joukkueet
+    var f = $('#calc-form'); if (!f || !pinSel) return 0;
+    var a = pinNorm(f.elements.team1.value), b = pinNorm(f.elements.team2.value), x = pinNorm(pinSel.t1), y = pinNorm(pinSel.t2);
+    return (a === x && b === y) ? 1 : ((a === y && b === x) ? -1 : 0);
+  }
+  function setv(id, v, dflt) { var el = document.getElementById(id); if (el) el.value = (v === null || v === undefined || v === '') ? dflt : v; }
+  function pinNote() {
+    var n = $('#pin-note'); if (!n) return;
+    if (!pinSel) { n.hidden = true; n.textContent = ''; return; }
+    var no = curMapNo(), has = !!(pinSel.maps && pinSel.maps[no]);
+    n.hidden = false; n.className = 'muted' + (has ? '' : ' warnnote');
+    n.textContent = has ? ('Pinnacle: ' + pinSel.t1 + ' vs ' + pinSel.t2 + ' · kartta ' + no + ' kertoimet käytössä')
+                        : ('Pinnaclen JSON:ssa ei ole kartan ' + no + ' kertoimia (kertoimet palautettu oletukseen)');
+  }
+  function applyPin() {
+    var f = $('#calc-form'); if (!f || !pinSel) { pinNote(); return; }
+    var d = (pinSel.maps || {})[curMapNo()], sw = pinOrient() === -1;
+    if (d) {
+      setv('f-odds1', sw ? d.odds2 : d.odds1, '1.85'); setv('f-odds2', sw ? d.odds1 : d.odds2, '1.85');
+      setv('f-total', d.total, 0); setv('f-over', d.over, 0); setv('f-under', d.under, 0);
+    } else {
+      setv('f-odds1', null, '1.85'); setv('f-odds2', null, '1.85'); setv('f-total', null, 0); setv('f-over', null, 0); setv('f-under', null, 0);
+    }
+    pinNote(); calcSave();
+  }
+  function pinMarkItems() {
+    $$('#pin-list .pin-item').forEach(function (i) {
+      var d = null; try { d = JSON.parse(i.dataset.match); } catch (err) { d = null; }
+      i.classList.toggle('on', !!(pinSel && d && d.key === pinSel.key));
+    });
+  }
+  function pinSelect(m) {
+    var f = $('#calc-form'); if (!f) return;
+    pinSel = m; f.elements.team1.value = m.t1; f.elements.team2.value = m.t2; f.elements.map_name.value = '';
+    pinMarkItems(); applyPin();
+    var fold = $('#pin-fold'); if (fold) fold.open = false;
+    toast({ msg: 'Ladattu: ' + m.t1 + ' vs ' + m.t2 + ' · kartta ' + curMapNo() });
+  }
+  function pinCheckTeams() {   // käsin muokatut joukkueet katkaisevat linkin valittuun otteluun
+    if (pinSel && pinOrient() === 0) { pinSel = null; pinWanted = ''; pinMarkItems(); pinNote(); calcSave(); }
+  }
+  function pinReselect() {   // JSON luettu: valinta säilyy jos sama ottelu löytyy edelleen
+    var key = pinSel ? pinSel.key : (pinWanted || null);
+    pinSel = null;
+    var hit = null;
+    $$('#pin-list .pin-item').forEach(function (i) {
+      var d = null; try { d = JSON.parse(i.dataset.match); } catch (err) { d = null; }
+      if (d && key && d.key === key) hit = d;
+    });
+    if (hit) pinSel = hit; else pinWanted = '';
+    pinMarkItems();
+    if (pinSel && !pinRestoring) applyPin(); else { pinNote(); calcSave(); }
+  }
+
   /* ---------- Laske-sivu muistaa valitun ottelun ja tuloksen ---------- */
   var CALC_FORM = 'calc_form', CALC_RES = 'calc_result', RES_TTL = 6 * 3600 * 1000;
   var CALC_FIELDS = ['team1', 'team2', 'odds1', 'odds2', 'map_name', 'total_line', 'total_over', 'total_under'];
@@ -269,6 +317,7 @@
     var o = {};
     CALC_FIELDS.forEach(function (n) { var el = f.elements[n]; if (el) o[n] = el.value; });
     var r = f.querySelector('input[name="kartta"]:checked'); if (r) o.kartta = r.value;
+    o.pin = pinSel ? pinSel.key : (pinWanted || '');
     store(CALC_FORM, JSON.stringify(o));
     var clr = $('#calc-clear'); if (clr) clr.hidden = !(o.team1 || o.team2);
   }
@@ -282,6 +331,7 @@
         el.value = o[n];
       });
       if (o.kartta) { var r = f.querySelector('input[name="kartta"][value="' + o.kartta + '"]'); if (r) r.checked = true; }
+      if (!pinSel) pinWanted = o.pin || '';
     }
     var res = $('#result'), saved = null;
     try { saved = JSON.parse(store(CALC_RES) || 'null'); } catch (e) { saved = null; }
@@ -300,12 +350,15 @@
     f.elements.map_name.value = '';
     var r1 = $('#k1'); if (r1) r1.checked = true;
     var res = $('#result'); if (res) res.innerHTML = '';
+    pinSel = null; pinWanted = ''; pinMarkItems(); pinNote();
     try { localStorage.removeItem(CALC_FORM); localStorage.removeItem(CALC_RES); } catch (e) { /* ei tallennusta */ }
     calcSave();
   }
   (function () {
     var f = $('#calc-form'); if (!f) return;
     f.addEventListener('input', calcSave); f.addEventListener('change', calcSave);
+    f.addEventListener('input', function (e) { if (e.target.name === 'team1' || e.target.name === 'team2') pinCheckTeams(); });
+    f.addEventListener('change', function (e) { if (e.target.name === 'kartta') applyPin(); });
     var clr = $('#calc-clear'); if (clr) clr.addEventListener('click', calcClear);
     document.body.addEventListener('htmx:afterSwap', function (e) {
       var t = e.detail.target;
@@ -352,6 +405,7 @@
       store(PIN_KEY, ta.value);
       if (!pinRestoring) store(PIN_TS, String(Date.now()));
     }
+    pinReselect();
     pinRestoring = false;
     pinStatus();
   });
@@ -360,6 +414,7 @@
     var ta = $('#pin-text'), l = $('#pin-list');
     if (ta) ta.value = ''; if (l) l.innerHTML = '';
     try { localStorage.removeItem(PIN_KEY); localStorage.removeItem(PIN_TS); } catch (err) { /* ei tallennusta */ }
+    pinSel = null; pinWanted = ''; pinNote(); calcSave();
     pinStatus(); toast({ msg: 'Pinnaclen JSON tyhjennetty' });
   });
   (function () { var ta = $('#pin-text'); if (ta) ta.addEventListener('input', pinStatus); })();

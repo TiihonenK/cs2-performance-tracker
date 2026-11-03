@@ -10,21 +10,18 @@
   <div class="kv"><span>Markkina (marginaali {{ ev.market.margin | num(1) }} % poistettu) <b>{{ (ev.market.p * 100) | pct(1) }}</b></span><span>Malli vs markkina <b class="{{ ev.market.diff | tone }}">{{ ev.market.diff | pct(1, true) }}-yks.</b></span></div>
   {% endif %}
   {% if ev.verdict %}
-  <div class="verdict {{ 'ok' if ev.verdict.ok else 'no' }}">
-    <div class="verdict-t"><svg class="icon"><use href="#{{ 'i-check' if ev.verdict.ok else 'i-x' }}"/></svg>{{ 'Lyö' if ev.verdict.ok else 'Älä lyö' }}</div>
-    <p>{{ ev.verdict.why }}</p>
-    <p class="sec" style="font-size:.82rem">
-      {% if ev.verdict.out_of_range %}{% elif ev.verdict.min_odds %}Pienin kerroin jolla EV ylittää {{ ev.verdict.min_ev | num(0) }} %: <b>{{ ev.verdict.min_odds | odds_fmt }}</b>.{% else %}Millään järkevällä kertoimella tämä ei ole arvoveto (tyypillisesti pieni turnaus / karsinta).{% endif %}
-      {% if ev.verdict.ok %} Neljäsosa-Kelly: <b>{{ ev.verdict.kelly_quarter | num(2) }} %</b> kassasta. Todennäköisyys on arvio ja yläpäässä liian optimistinen - harkitse tasapanosta.{% endif %}
-    </p>
-    {% if not ev.verdict.out_of_range %}
-    <p class="sec" style="font-size:.82rem">Tuomio yhdistää historian (miten vastaavat vedot ovat osuneet kertoimellasi) ja mallin tälle linjalle. Malli saa painon {{ (ev.verdict.model_weight * 100) | num(0) }} % ja sen vaikutus on rajattu ±15 %-yks.: datasta ei vielä voi päätellä, kuinka paljon mallin luku kannattaa uskoa, joten paino on varovainen oletus.</p>
-    {% if ev.verdict.outlier %}<p class="sec" style="font-size:.82rem;color:var(--warn)"><b>Tarkista ennen vetoa:</b> malli ({{ (ev.model_p * 100) | pct(1) }}) ja historia ({{ (ev.verdict.cal_p * 100) | pct(1) }}) eroavat {{ ev.verdict.gap | abs | num(0) }} %-yks. Näin suuri ero johtuu yleensä datasta tai tiedosta jota malli ei näe (rooli, kokoonpano, väärä kartta tai linja eri kohteelle), ei bookkerin virheestä.</p>{% endif %}
-    {% endif %}
+  <div class="verdict {{ 'ok' if ev.verdict.ok else 'no' }}" role="status" aria-label="{{ 'Lyö' if ev.verdict.ok else 'Älä lyö' }}">
+    <svg class="icon vi" aria-hidden="true"><use href="#{{ 'i-check' if ev.verdict.ok else 'i-x' }}"/></svg>
+    <div><div class="lab">Osuma</div><div class="val num">{{ (ev.verdict.show_p * 100) | pct(1) }}</div></div>
+    <div><div class="lab">EV</div><div class="val num">{{ (ev.verdict.show_ev * 100) | pct(1, true) }}</div></div>
+    <div><div class="lab">Pienin kerroin</div><div class="val num">{{ ev.verdict.min_odds | odds_fmt if ev.verdict.min_odds else '–' }}</div></div>
   </div>
   {% endif %}
-  {% if n_map >= max_per_map %}
-  <div class="banner warn"><svg class="icon" style="width:20px;height:20px"><use href="#i-alert"/></svg><div>Kartalla {{ kartta }} on jo {{ n_map }} vireillä olevaa vetoa ({{ n_same }} samaan suuntaan). Saman kartan vedot voittavat ja häviävät yhdessä (kierrosmäärä, jatkoaika) - valitse enintään {{ max_per_map }} parasta.</div></div>
+  {% if n_map >= 2 %}
+  <div class="banner mapcount {{ 'err' if n_map >= 4 else 'warn' }}" role="status">
+    <svg class="icon" style="width:20px;height:20px" aria-hidden="true"><use href="#i-alert"/></svg>
+    <span>Vetoja tällä kartalla</span><b class="num">{{ n_map }}</b>
+  </div>
   {% endif %}
   {% if ev.calib_text %}<details class="fold"><summary style="font-weight:550;font-size:.85rem;color:var(--text-2)">Mitä kalibrointi on oppinut vedoistasi?</summary><pre style="white-space:pre-wrap;font:inherit;font-size:.82rem;color:var(--text-2);margin:0">{{ ev.calib_text }}</pre></details>{% endif %}
 </div>
