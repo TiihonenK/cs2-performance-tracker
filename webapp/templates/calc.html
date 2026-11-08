@@ -6,16 +6,29 @@
 
 <section class="card">
   <details class="fold" id="pin-fold">
-    <summary>Kertoimet (Pinnacle-haku / Epicbet-JSON) <span class="badge" id="pin-count" hidden></span></summary>
+    <summary>Kertoimet (Pinnacle ja Epicbet) <span class="badge" id="pin-count" hidden></span></summary>
     <div class="stack">
-      <button class="btn primary" id="pin-fetch" type="button">Hae Pinnacle-kertoimet</button>
-      <small class="muted" id="pin-fetch-status" hidden></small>
-      <textarea name="text" id="pin-text" placeholder='{"matches": [{"team1": "...", "team2": "...", "maps": [{"map": "Kartta 1", "odds1": 1.85, "odds2": 1.95, "total_line": 21.5, "over_odds": 1.9, "under_odds": 1.9}]}]}'></textarea>
-      <div class="row" style="display:flex;gap:8px">
-        <button class="btn" id="pin-read" type="button" hx-post="/pinnacle" hx-include="#pin-text" hx-target="#pin-list" style="flex:1">Lue JSON</button>
-        <button class="btn ghost" id="pin-clear" type="button" hidden>Tyhjennä</button>
+      <div class="stack" style="gap:8px">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+          <b>Pinnacle</b>
+          <button class="btn sm ghost" id="pin-clear" type="button" hidden>Tyhjennä</button>
+        </div>
+        <button class="btn primary" id="pin-fetch" type="button">Hae Pinnacle-kertoimet</button>
+        <small class="muted" id="pin-fetch-status" hidden></small>
+        <textarea name="text" id="pin-text" placeholder='Pinnaclen JSON (täyttyy napista, tai liitä kirjanmerkin / kuvakaappauksen JSON): {"matches": [{"team1": "...", "team2": "...", "maps": [{"map": "Kartta 1", "odds1": 1.85, "odds2": 1.95, "total_line": 21.5, "over_odds": 1.9, "under_odds": 1.9}]}]}'></textarea>
+        <small class="muted" id="pin-meta" hidden></small>
       </div>
-      <small class="muted" id="pin-meta" hidden></small>
+
+      <div class="stack" style="gap:8px">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+          <b>Epicbet</b>
+          <button class="btn sm ghost" id="epic-clear" type="button" hidden>Tyhjennä</button>
+        </div>
+        <textarea name="epic_text" id="epic-text" placeholder='Liitä tähän Epicbet CS2 -kirjanmerkin kopioima JSON (pelaajalinjat, ≤ 12 h ennen alkua)'></textarea>
+        <small class="muted" id="epic-meta" hidden></small>
+      </div>
+
+      <button class="btn" id="pin-read" type="button" hx-post="/pinnacle" hx-include="#pin-text, #epic-text" hx-target="#pin-list">Lue JSON</button>
       <small class="muted"><a href="/kirjanmerkit">Asenna kirjanmerkit: Pinnacle (karttakertoimet) ja Epicbet (pelaajalinjat) yhdellä klikkauksella →</a></small>
       <div id="pin-list"></div>
     </div>

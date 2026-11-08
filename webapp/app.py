@@ -197,12 +197,16 @@ def bookmarklets_page(request: Request):
 
 
 @app.post("/pinnacle", response_class=HTMLResponse)
-def pinnacle(request: Request, text: str = Form("")):
+def pinnacle(request: Request, text: str = Form(""), epic_text: str = Form("")):
+    """Lukee molemmat JSON-laatikot (Pinnacle ja Epicbet) yhdeksi ottelulistaksi. Järjestys: Pinnacle ensin, Epicbet perään
+    (samanarvoisista myöhempi voittaa; Pinnacle voittaa Epicbetin kartta- ja totalikertoimissa joka tapauksessa)."""
     teams = set(db.team_names())
-    try:
-        docs = pinimport.parse_documents(text) if text.strip() else []
-    except json.JSONDecodeError as e:
-        return render(request, "partials/error.html", problems=[f"JSON ei kelpaa: {e}"])
+    docs = []
+    for label, raw in (("Pinnacle-laatikon", text), ("Epicbet-laatikon", epic_text)):
+        try:
+            docs += pinimport.parse_documents(raw) if raw.strip() else []
+        except json.JSONDecodeError as e:
+            return render(request, "partials/error.html", problems=[f"{label} JSON ei kelpaa: {e}"])
     items = pinimport.merge_matches(docs, teams)
     if not items:
         return render(request, "partials/error.html",

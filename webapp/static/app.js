@@ -419,50 +419,112 @@
     window.addEventListener('pageshow', function (e) { if (e.persisted) calcRestore(); });
   })();
 
-  /* ---------- Pinnaclen JSON: viimeisin tallentuu laitteelle ---------- */
-  var PIN_KEY = 'pin_json', PIN_TS = 'pin_json_ts', pinRestoring = false;
-  function pinStatus() {
-    var items = $$('#pin-list .pin-item').length, ts = store(PIN_TS);
-    var cnt = $('#pin-count'), meta = $('#pin-meta'), clr = $('#pin-clear'), has = !!store(PIN_KEY);
-    if (cnt) { cnt.hidden = !items; cnt.textContent = items ? String(items) : ''; }
-    if (clr) clr.hidden = !has && !($('#pin-text') || {}).value;
-    if (meta) {
-      meta.hidden = !has;
-      if (has) {
-        var when = '';
-        if (ts) { var d = new Date(parseInt(ts, 10)); when = ' · tallennettu ' + d.getDate() + '.' + (d.getMonth() + 1) + '. klo ' + ('0' + d.getHours()).slice(-2) + '.' + ('0' + d.getMinutes()).slice(-2); }
-        meta.textContent = 'Viimeisin JSON on tallessa tälle laitteelle' + when + '. Uusi JSON korvaa sen.';
+  /* ---------- Pinnaclen ja Epicbetin JSON: kummankin viimeisin tallentuu laitteelle ---------- */
+  var BOXES = [
+    { id: 'pin',  ta: '#pin-text',  meta: '#pin-meta',  clr: '#pin-clear',  key: 'pin_json',  ts: 'pin_json_ts',  name: 'Pinnacle', lines: false },
+    { id: 'epic', ta: '#epic-text', meta: '#epic-meta', clr: '#epic-clear', key: 'epic_json', ts: 'epic_json_ts', name: 'Epicbet',  lines: true }
+  ];
+  var pinRestoring = false;
+
+  /* Teksti -> JSON-dokumenttien lista (peräkkäin liitetyt dokumentit sallitaan, kuten palvelimella); null jos ei kelvollista JSONia. */
+  function pinDocs(text) {
+    var out = [], i = 0, n = text.length;
+    while (i < n) {
+      var c = text.charAt(i);
+      if (c === ' ' || c === '\n' || c === '\r' || c === '\t' || c === ',' || c === ';') { i++; continue; }
+      if (c !== '{' && c !== '[') return null;
+      var depth = 0, j = i, inStr = false, done = false;
+      for (; j < n; j++) {
+        var ch = text.charAt(j);
+        if (inStr) { if (ch === '\\') j++; else if (ch === '"') inStr = false; }
+        else if (ch === '"') inStr = true;
+        else if (ch === '{' || ch === '[') depth++;
+        else if (ch === '}' || ch === ']') { depth--; if (depth === 0) { done = true; break; } }
       }
+      if (!done) return null;
+      try { out.push(JSON.parse(text.slice(i, j + 1))); } catch (err) { return null; }
+      i = j + 1;
     }
+    return out;
   }
+  function pinWhen(d) { return d.getDate() + '.' + (d.getMonth() + 1) + '. klo ' + ('0' + d.getHours()).slice(-2) + '.' + ('0' + d.getMinutes()).slice(-2); }
+  function pinStatus() {
+    var items = $$('#pin-list .pin-item').length;
+    var cnt = $('#pin-count');
+    if (cnt) { cnt.hidden = !items; cnt.textContent = items ? String(items) : ''; }
+    BOXES.forEach(function (b) {
+      var ta = $(b.ta), meta = $(b.meta), clr = $(b.clr); if (!ta) return;
+      var txt = ta.value.trim();
+      if (clr) clr.hidden = !txt;
+      if (!meta) return;
+      meta.style.color = '';
+      if (!txt) { meta.hidden = true; meta.textContent = ''; return; }
+      meta.hidden = false;
+      var docs = pinDocs(txt);
+      if (!docs) { meta.style.color = 'var(--warn)'; meta.textContent = 'JSON ei näytä kelvolta – tarkista että koko teksti tuli liitettyä.'; return; }
+      var m = 0, pl = 0, fetched = '';
+      docs.forEach(function (d) {
+        if (!d || !Array.isArray(d.matches)) return;
+        m += d.matches.length;
+        d.matches.forEach(function (x) { pl += ((x && x.players) || []).length; });
+        if (d.fetched && String(d.fetched) > fetched) fetched = String(d.fetched);
+      });
+      var parts = [m + (m === 1 ? ' ottelu' : ' ottelua')];
+      if (b.lines) parts.push(pl + ' pelaajalinjaa');
+      var t = fetched ? new Date(fetched) : null, ts = store(b.ts);
+      if (t && !isNaN(t)) {
+        parts.push('haettu ' + pinWhen(t));
+        var h = (Date.now() - t.getTime()) / 3600000;
+        if (h >= 3) { parts.push('vanha (' + Math.floor(h) + ' h)'); meta.style.color = 'var(--warn)'; }
+      } else if (ts) parts.push('liitetty ' + pinWhen(new Date(parseInt(ts, 10))));
+      meta.textContent = b.name + ': ' + parts.join(' · ') + ' · tallessa tällä laitteella';
+    });
+  }
+  function pinSave(b) {
+    var ta = $(b.ta); if (!ta || !ta.value.trim()) return;
+    if (store(b.key) !== ta.value) { store(b.key, ta.value); if (!pinRestoring) store(b.ts, String(Date.now())); }
+  }
+  function pinRead() { var btn = $('#pin-read'); if (btn && window.htmx) htmx.trigger(btn, 'click'); }
   function pinRestore() {
-    var ta = $('#pin-text'); if (!ta) return;
-    var saved = store(PIN_KEY);
-    if (saved && !ta.value.trim()) {
-      ta.value = saved; pinRestoring = true;
-      var btn = $('#pin-read'); if (btn && window.htmx) htmx.trigger(btn, 'click');
+    if (!$('#pin-text') || !$('#epic-text')) return;
+    /* Siirtymä: ennen yhteistä laatikkoa Pinnacle- ja Epicbet-dokumentit tallentuivat yhteen (pin_json) -> Epicbet siirretään omaan laatikkoonsa. */
+    if (!store('epic_split')) {
+      var sp = store('pin_json'), docs = sp && !store('epic_json') ? pinDocs(sp) : null;
+      if (docs) {
+        var isE = function (d) { return d && d.source === 'epicbet'; }, ep = docs.filter(isE), rest = docs.filter(function (d) { return !isE(d); });
+        var join = function (a) { return a.map(function (d) { return JSON.stringify(d); }).join('\n'); };
+        if (ep.length) {
+          store('epic_json', join(ep)); store('epic_json_ts', store('pin_json_ts') || String(Date.now()));
+          if (rest.length) store('pin_json', join(rest)); else { try { localStorage.removeItem('pin_json'); localStorage.removeItem('pin_json_ts'); } catch (err) { /* ei tallennusta */ } }
+        }
+      }
+      store('epic_split', '1');
     }
+    var any = false;
+    BOXES.forEach(function (b) {
+      var ta = $(b.ta), saved = store(b.key);
+      if (ta && saved && !ta.value.trim()) { ta.value = saved; any = true; }
+    });
+    if (any) { pinRestoring = true; pinRead(); }
     pinStatus();
   }
   document.body.addEventListener('htmx:afterSwap', function (e) {
     var t = e.detail.target;
     if (!t || t.id !== 'pin-list') return;
-    var ta = $('#pin-text');
-    if (ta && ta.value.trim() && $('.pin-item', t)) {
-      store(PIN_KEY, ta.value);
-      if (!pinRestoring) store(PIN_TS, String(Date.now()));
-    }
+    if ($('.pin-item', t)) BOXES.forEach(pinSave);
     pinReselect();
     pinRestoring = false;
     pinStatus();
   });
   document.addEventListener('click', function (e) {
-    if (!e.target.closest('#pin-clear')) return;
-    var ta = $('#pin-text'), l = $('#pin-list');
-    if (ta) ta.value = ''; if (l) l.innerHTML = '';
-    try { localStorage.removeItem(PIN_KEY); localStorage.removeItem(PIN_TS); } catch (err) { /* ei tallennusta */ }
-    pinSel = null; pinWanted = ''; pinNote(); calcSave();
-    pinStatus(); toast({ msg: 'Pinnaclen JSON tyhjennetty' });
+    var btn = e.target.closest('#pin-clear, #epic-clear'); if (!btn) return;
+    var b = BOXES.filter(function (x) { return x.clr === '#' + btn.id; })[0], o = BOXES.filter(function (x) { return x !== b; })[0];
+    var ta = $(b.ta), ota = $(o.ta), l = $('#pin-list');
+    if (ta) ta.value = '';
+    try { localStorage.removeItem(b.key); localStorage.removeItem(b.ts); } catch (err) { /* ei tallennusta */ }
+    if (ota && ota.value.trim()) pinRead();          // toinen laatikko jää voimaan -> lista luetaan uudelleen
+    else { if (l) l.innerHTML = ''; pinSel = null; pinWanted = ''; pinNote(); calcSave(); }
+    pinStatus(); toast({ msg: b.name + '-JSON tyhjennetty' });
   });
   /* ---------- Hae Pinnacle-kertoimet palvelimelta ---------- */
   document.addEventListener('click', function (e) {
@@ -483,7 +545,7 @@
       .catch(function () { say('Yhteys palvelimeen katkesi. Yritä uudelleen.', true); })
       .then(function () { b.disabled = false; b.textContent = label; });
   });
-  (function () { var ta = $('#pin-text'); if (ta) ta.addEventListener('input', pinStatus); })();
+  BOXES.forEach(function (b) { var ta = $(b.ta); if (ta) ta.addEventListener('input', pinStatus); });
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function () { setTimeout(pinRestore, 0); });
   else setTimeout(pinRestore, 0);
   window.addEventListener('pageshow', function (e) { if (e.persisted) pinRestore(); });
