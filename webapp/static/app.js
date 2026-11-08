@@ -88,6 +88,8 @@
       inp.dispatchEvent(new Event('input', { bubbles: true }));
       return;
     }
+    var ac = e.target.closest('[data-alt]');
+    if (ac) { altApply(ac); return; }
     var pm = e.target.closest('[data-match]');
     if (pm) { var md = null; try { md = JSON.parse(pm.dataset.match); } catch (err) { md = null; } if (md) pinSelect(md); return; }
     var v = e.target.closest('[data-view]');
@@ -103,6 +105,37 @@
       var c = $('#stats-content'); c.setAttribute('hx-get', '/stats/' + tb.dataset.tab);
       htmx.process(c); htmx.trigger(c, 'refresh');
     }
+  });
+  /* Pelaajasheetin Epicbet-linjat: linja + kertoimet kerralla, suunta vaihtaa kertoimet */
+  var altSel = null;
+  function setField(id, v) { var el = document.getElementById(id); if (el) el.value = v; }
+  function altOdds() {   // kertoimet valitun suunnan mukaan
+    if (!altSel) return;
+    var dir = ($('#betform input[name="direction"]:checked') || {}).value || 'OVER';
+    var own = dir === 'OVER' ? altSel.over : altSel.under, opp = dir === 'OVER' ? altSel.under : altSel.over;
+    setField('s-odds', own || ''); setField('s-opp', opp || 0);
+  }
+  function altApply(chip) {
+    var line = chip.dataset.line, over = parseFloat(chip.dataset.over) || 0, under = parseFloat(chip.dataset.under) || 0;
+    $$('#alt-chips .altchip').forEach(function (c) { c.classList.toggle('on', c === chip); });
+    var dir = chip.dataset.dir;
+    if (dir) { var r = document.getElementById(dir === 'UNDER' ? 'd-under' : 'd-over'); if (r) r.checked = true; }
+    altSel = { line: line, over: over, under: under };
+    setField('s-line', line); altOdds();
+    var l = document.getElementById('s-line'); if (l) l.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+  document.addEventListener('change', function (e) {
+    if (e.target.name === 'direction' && e.target.closest('#betform') && altSel) { altOdds(); }
+  });
+  document.addEventListener('input', function (e) {
+    if (e.target.id === 's-line' && altSel && String(parseFloat(e.target.value)) !== String(parseFloat(altSel.line))) {
+      altSel = null; $$('#alt-chips .altchip').forEach(function (c) { c.classList.remove('on'); });
+    }
+  });
+  document.body.addEventListener('htmx:afterSwap', function (e) {   // uusi sheet: lue valittu linja chipistä
+    if (!e.detail.target || e.detail.target.id !== 'sheet-body') return;
+    var on = $('#alt-chips .altchip.on');
+    altSel = on ? { line: on.dataset.line, over: parseFloat(on.dataset.over) || 0, under: parseFloat(on.dataset.under) || 0 } : null;
   });
   var swap = $('#swap-teams');
   if (swap) swap.addEventListener('click', function () {
@@ -260,14 +293,21 @@
     var a = pinNorm(f.elements.team1.value), b = pinNorm(f.elements.team2.value), x = pinNorm(pinSel.t1), y = pinNorm(pinSel.t2);
     return (a === x && b === y) ? 1 : ((a === y && b === x) ? -1 : 0);
   }
+  function pinLines() {   // valitun ottelun pelaajalinjat nykyiselle kartalle
+    if (!pinSel || !pinSel.players) return [];
+    var no = parseInt(curMapNo(), 10);
+    return pinSel.players.filter(function (p) { return p.map === no; });
+  }
   function setv(id, v, dflt) { var el = document.getElementById(id); if (el) el.value = (v === null || v === undefined || v === '') ? dflt : v; }
   function pinNote() {
     var n = $('#pin-note'); if (!n) return;
     if (!pinSel) { n.hidden = true; n.textContent = ''; return; }
     var no = curMapNo(), has = !!(pinSel.maps && pinSel.maps[no]);
+    var pl = pinLines().length, plTxt = (pinSel.players && pinSel.players.length) ? (pl ? (' · ' + pl + ' pelaajalinjaa') : ' · ei pelaajalinjoja tälle kartalle') : '';
+    var src = (pinSel.map_src && pinSel.map_src[no] === 'epicbet') ? 'Epicbet' : 'Pinnacle';
     n.hidden = false; n.className = 'muted' + (has ? '' : ' warnnote');
-    n.textContent = has ? ('Pinnacle: ' + pinSel.t1 + ' vs ' + pinSel.t2 + ' · kartta ' + no + ' kertoimet käytössä')
-                        : ('Pinnaclen JSON:ssa ei ole kartan ' + no + ' kertoimia (kertoimet palautettu oletukseen)');
+    n.textContent = has ? (src + ': ' + pinSel.t1 + ' vs ' + pinSel.t2 + ' · kartta ' + no + ' kertoimet käytössä' + plTxt)
+                        : ('JSON:ssa ei ole kartan ' + no + ' kertoimia (kertoimet palautettu oletukseen)' + plTxt);
   }
   function applyPin() {
     var f = $('#calc-form'); if (!f || !pinSel) { pinNote(); return; }
@@ -360,6 +400,11 @@
     f.addEventListener('input', function (e) { if (e.target.name === 'team1' || e.target.name === 'team2') pinCheckTeams(); });
     f.addEventListener('change', function (e) { if (e.target.name === 'kartta') applyPin(); });
     var clr = $('#calc-clear'); if (clr) clr.addEventListener('click', calcClear);
+    f.addEventListener('htmx:configRequest', function (e) {
+      var L = pinLines();
+      e.detail.parameters.lines = L.length ? JSON.stringify(L) : '';
+      e.detail.parameters.epic_tournament = (L.length && pinSel.tournament) ? pinSel.tournament : '';
+    });
     document.body.addEventListener('htmx:afterSwap', function (e) {
       var t = e.detail.target;
       if (!t || t.id !== 'result') return;

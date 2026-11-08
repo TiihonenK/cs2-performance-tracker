@@ -17,7 +17,7 @@ from fastapi.templating import Jinja2Templates
 
 from players_props import MAP_NAMES
 
-from . import db, sim, stats
+from . import db, pinimport, sim, stats
 
 BASE = Path(__file__).parent
 app = FastAPI(title="CS2 Vetomalli", docs_url=None, redoc_url=None)
@@ -159,7 +159,8 @@ def _fl(v, default=0.0):
 @app.post("/calc", response_class=HTMLResponse)
 def calc(request: Request, team1: str = Form(""), team2: str = Form(""), odds1: str = Form("1.85"),
          odds2: str = Form("1.85"), kartta: str = Form("Kartta 1"), map_name: str = Form(""),
-         total_line: str = Form("0"), total_over: str = Form("0"), total_under: str = Form("0")):
+         total_line: str = Form("0"), total_over: str = Form("0"), total_under: str = Form("0"),
+         lines: str = Form(""), epic_tournament: str = Form("")):
     teams = set(db.team_names())
     o1, o2 = _fl(odds1, 0), _fl(odds2, 0)
     problems = []
@@ -173,33 +174,33 @@ def calc(request: Request, team1: str = Form(""), team2: str = Form(""), odds1: 
         problems.append("Anna molemmille joukkueille voittokerroin (yli 1,00).")
     if problems:
         return render(request, "partials/error.html", problems=problems)
+    try:
+        ep = json.loads(lines) if lines.strip() else []
+    except json.JSONDecodeError:
+        ep = []
+    ep = [x for x in ep if isinstance(x, dict)][:400] if isinstance(ep, list) else []
     sid, s = sim.run(team1, team2, o1, o2, kartta, map_name or None,
-                     _fl(total_line), _fl(total_over), _fl(total_under))
+                     _fl(total_line), _fl(total_over), _fl(total_under),
+                     epic_lines=ep, epic_tournament=epic_tournament or None)
     return render(request, "partials/sim_result.html", sid=sid, s=s)
+
+
+@app.get("/epicbet", response_class=HTMLResponse)
+def epicbet_page(request: Request):
+    """Asennussivu: kirjanmerkki joka hakee Epicbetin CS2-pelaajalinjat yhdellä klikkauksella."""
+    from urllib.parse import quote
+    code = (Path(__file__).parent / "static" / "epicbet_cs2.min.js").read_text(encoding="utf-8")
+    return render(request, "epicbet.html", bm_url="javascript:" + quote(code, safe=""), **page_ctx("calc"))
 
 
 @app.post("/pinnacle", response_class=HTMLResponse)
 def pinnacle(request: Request, text: str = Form("")):
     teams = set(db.team_names())
     try:
-        matches = json.loads(text).get("matches", []) if text.strip() else []
-    except (json.JSONDecodeError, AttributeError) as e:
+        docs = pinimport.parse_documents(text) if text.strip() else []
+    except json.JSONDecodeError as e:
         return render(request, "partials/error.html", problems=[f"JSON ei kelpaa: {e}"])
-    items = []
-    for m in matches:
-        if not isinstance(m, dict):
-            continue
-        t1, t2 = m.get("team1", ""), m.get("team2", "")
-        maps = {}
-        for mp in m.get("maps", []) or []:
-            mo = re.search(r"(\d)", str(mp.get("map", "")))
-            if not mo:
-                continue
-            maps[mo.group(1)] = dict(odds1=mp.get("odds1"), odds2=mp.get("odds2"), total=mp.get("total_line"),
-                                     over=mp.get("over_odds"), under=mp.get("under_odds"))
-        items.append(dict(t1=t1, t2=t2, key=f"{t1} vs {t2}", maps=maps, map_list=", ".join(sorted(maps)),
-                          has_total=any(v.get("total") for v in maps.values()),
-                          missing=[t for t in (t1, t2) if t not in teams]))
+    items = pinimport.merge_matches(docs, teams)
     if not items:
         return render(request, "partials/error.html",
                       problems=['JSON:sta ei löytynyt yhtään ottelua ("matches"-lista puuttuu tai on tyhjä).'])
@@ -207,15 +208,32 @@ def pinnacle(request: Request, text: str = Form("")):
 
 
 @app.get("/sim/{sid}/player", response_class=HTMLResponse)
-def sim_player(request: Request, sid: str, name: str):
+def sim_player(request: Request, sid: str, name: str, line: str = "", dir: str = ""):
     s = sim.get(sid)
     if not s or name not in s["players"]:
         return render(request, "partials/expired.html")
     p = s["players"][name]
-    ev = sim.evaluate(s, name, "UNDER" if p["p_under"] >= p["p_over"] else "OVER", p["line"], 1.85, None, None)
+    rows = (s.get("epic") or {}).get(name) or []
+    pick = None
+    if rows:
+        want = _fl(line, None) if line else None
+        if want is not None:
+            pick = next((r for r in rows if abs(r["line"] - want) < 1e-9), None)
+        if pick is None and p.get("ep_best_line") is not None:
+            pick = next((r for r in rows if r["line"] == p["ep_best_line"]), None)
+        if pick is None:      # ei arvoa: lähin tasakertoimiseen linja
+            pick = min(rows, key=lambda r: abs((r["over"] or 2) - (r["under"] or 2)))
+    d_line, d_dir, d_odds, d_opp = p["line"], "UNDER" if p["p_under"] >= p["p_over"] else "OVER", 1.85, 0
+    if pick and pick["opts"]:
+        opt = next((o for o in pick["opts"] if o["direction"] == dir), None) if dir in ("OVER", "UNDER") else None
+        opt = opt or pick["best"] or pick["opts"][0]
+        d_line, d_dir, d_odds = pick["line"], opt["direction"], opt["odds"]
+        d_opp = (pick["under"] if opt["direction"] == "OVER" else pick["over"]) or 0
+    ev = sim.evaluate(s, name, d_dir, d_line, d_odds, d_opp or None, s.get("epic_tournament"))
     return render(request, "partials/player_sheet.html", sid=sid, s=s, p=p, ev=ev,
                   tournaments=db.active_tournament_names(), today=datetime.now().strftime("%Y-%m-%d"),
-                  default_dir=ev["direction"], default_line=p["line"])
+                  default_dir=d_dir, default_line=d_line, default_odds=d_odds, default_opp=d_opp, alts=rows,
+                  alt_sel=(pick["line"] if pick else None), default_tournament=s.get("epic_tournament"))
 
 
 @app.get("/sim/{sid}/eval", response_class=HTMLResponse)

@@ -15,7 +15,7 @@ from players_props import (
     kpr_corrections, simulate_team_kills,
 )
 
-from . import db
+from . import db, pinimport
 
 NO_MAP = ""
 _CACHE = OrderedDict()
@@ -43,7 +43,7 @@ def get(sid):
 
 
 def run(team1, team2, odds1, odds2, kartta, map_name=None, total_line=0.0, total_over=0.0,
-        total_under=0.0, n_sims=10000):
+        total_under=0.0, n_sims=10000, epic_lines=None, epic_tournament=None):
     """Palauttaa (sim_id, sim_dict). Sama logiikka kuin dashboard.py:n 'Laske arviot'."""
     p1, p2 = 1 / odds1, 1 / odds2
     prob1, prob2 = p1 / (p1 + p2), p2 / (p1 + p2)
@@ -86,7 +86,64 @@ def run(team1, team2, odds1, odds2, kartta, map_name=None, total_line=0.0, total
         t1_players=rows(team1, t1_sim), t2_players=rows(team2, t2_sim), created=time.time(),
     )
     sim["players"] = {p["name"]: p for p in sim["t1_players"] + sim["t2_players"]}
+    attach_lines(sim, epic_lines or [], epic_tournament)
     return _put(sim), sim
+
+
+def _line_options(sim, name, line, over, under, tournament):
+    """Molemmat suunnat annetulla linjalla ja kertoimilla: mallin p, yhdistetty p, EV ja onko arvoa."""
+    p = sim["players"][name]
+    p_over, p_under, _, _ = kills_probability_at_line(p["kills"], line)
+    cal = get_calibration()
+    opts = []
+    for direction, odds, mp in (("OVER", over, p_over), ("UNDER", under, p_under)):
+        if not odds or odds <= 1:
+            continue
+        comb_p, ev, cal_p, _w = _combined(mp, odds, direction, tournament, cal)
+        opts.append(dict(direction=direction, odds=float(odds), model_p=mp, comb_p=comb_p, ev=ev,
+                         ok=bool(ev >= bc.MIN_EV and mp >= MODEL_P_FLOOR)))
+    return opts
+
+
+def attach_lines(sim, lines, tournament=None):
+    """Liittää kirjan (Epicbet) pelaajalinjat simulaatioon: sim['epic'][pelaaja] = [{line, over, under, opts, best}],
+    sim['epic_top'] = arvolinjat EV-järjestyksessä, sim['epic_missing'] = nimet joita ei löytynyt kokoonpanosta."""
+    sim["epic"], sim["epic_top"], sim["epic_missing"], sim["epic_n"] = {}, [], [], 0
+    sim["epic_tournament"] = tournament
+    if not lines:
+        return
+    names = list(sim["players"])
+    seen_missing = set()
+    for ln in lines:
+        nm = pinimport.match_player(ln.get("player", ""), names)
+        if nm is None:
+            seen_missing.add(str(ln.get("player")))
+            continue
+        line, over, under = ln.get("line"), ln.get("over"), ln.get("under")
+        if line is None:
+            continue
+        opts = _line_options(sim, nm, float(line), over, under, tournament)
+        oks = [o for o in opts if o["ok"]]
+        best = max(oks, key=lambda o: o["ev"]) if oks else (max(opts, key=lambda o: o["ev"]) if opts else None)
+        sim["epic"].setdefault(nm, []).append(dict(line=float(line), over=over, under=under, opts=opts, best=best))
+        sim["epic_n"] += 1
+    for nm, rows in sim["epic"].items():
+        rows.sort(key=lambda r: r["line"])
+        for r in rows:
+            if r["best"] and r["best"]["ok"]:
+                sim["epic_top"].append(dict(player=nm, team=sim["players"][nm]["team"], line=r["line"], **r["best"]))
+    sim["epic_top"].sort(key=lambda r: r["ev"], reverse=True)
+    sim["epic_missing"] = sorted(seen_missing)
+    for nm, p in sim["players"].items():
+        rows = sim["epic"].get(nm)
+        p["ep"] = rows or []
+        oks = [r["best"] for r in (rows or []) if r["best"] and r["best"]["ok"]]
+        p["ep_best"] = max(oks, key=lambda o: o["ev"]) if oks else None
+        p["ep_best_line"] = None
+        if p["ep_best"]:
+            for r in rows:
+                if r["best"] is p["ep_best"]:
+                    p["ep_best_line"] = r["line"]
 
 
 MODEL_WEIGHT = 0.30    # kuinka paljon mallin arvio painaa historiasuodattimen rinnalla (ennakko, ei datasta)

@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-h"><h1>Epicbet-kirjanmerkki</h1></div>
+
+<section class="card stack">
+  <p style="margin:0">Kirjanmerkki hakee Epicbetin CS2-ottelut ja <b>kaikkien pelaajien tappolinjat ja kertoimet</b> yhdellä klikkauksella ja kopioi ne JSONina leikepöydälle. Liitä JSON Laske-sivun JSON-laatikkoon: ottelu, kartta ja pelaajalinjat valitaan siitä, ja arvolinjat näkyvät listana.</p>
+  <p class="muted" style="margin:0">Epicbet avaa pelaajamarkkinat vasta noin 12 tuntia ennen ottelun alkua, joten aiemmin linjoja ei näy. Kirjanmerkki kertoo tällöin lähimmät ottelut.</p>
+</section>
+
+<section class="card stack">
+  <h2 style="margin:0;font-size:1rem">1. Asenna kirjanmerkki (kerran)</h2>
+  <p style="margin:0">Raahaa tämä painike selaimen kirjanmerkkipalkkiin:</p>
+  <p style="margin:0"><a class="btn primary" id="bm-link" href="{{ bm_url }}" onclick="return false" style="display:inline-block;text-decoration:none">Epicbet CS2</a></p>
+  <details class="fold">
+    <summary>Ei onnistu raahaamalla? Luo kirjanmerkki käsin</summary>
+    <div class="stack">
+      <p class="muted" style="margin:0">Luo uusi kirjanmerkki (Chromessa hiiren oikea kirjanmerkkipalkissa → Lisää sivu), anna nimeksi <i>Epicbet CS2</i> ja liitä URL-kenttään alla oleva teksti.</p>
+      <textarea id="bm-text" readonly rows="4" style="font-size:.72rem">{{ bm_url }}</textarea>
+      <button class="btn" type="button" id="bm-copy">Kopioi kirjanmerkin URL</button>
+    </div>
+  </details>
+</section>
+
+<section class="card stack">
+  <h2 style="margin:0;font-size:1rem">iPhone (Safari)</h2>
+  <ol style="margin:0;padding-left:1.2em;line-height:1.6">
+    <li>Paina yllä <b>Kopioi kirjanmerkin URL</b> (avaa kohta "Ei onnistu raahaamalla?").</li>
+    <li>Avaa tämä sivu Safarissa, paina Jaa → <b>Lisää kirjanmerkki</b>, nimeksi <i>Epicbet CS2</i>, tallenna.</li>
+    <li>Avaa kirjanmerkit (kirjakuvake) → <b>Muokkaa</b> → valitse <i>Epicbet CS2</i> → pyyhi osoite ja liitä kopioitu teksti (pitkä painallus → Liitä) → Valmis.</li>
+    <li>Käytä: avaa epicbet.com Safarissa, avaa kirjanmerkit ja paina <i>Epicbet CS2</i>. Paina ikkunassa <b>Kopioi JSON</b>, siirry Vetomalliin ja liitä JSON Laske-sivun laatikkoon (pitkä painallus → Liitä).</li>
+  </ol>
+  <p class="muted" style="margin:0">Safari ja kotivalikkoon lisätty Vetomalli-sovellus säilyttävät tiedot erikseen, joten liitä JSON siihen sovellukseen jota käytät vetoihin.</p>
+</section>
+
+<section class="card stack">
+  <h2 style="margin:0;font-size:1rem">2. Käyttö</h2>
+  <ol style="margin:0;padding-left:1.2em;line-height:1.6">
+    <li>Avaa epicbet.com (esim. Esports → Counter-Strike 2) ja paina kirjanmerkkiä.</li>
+    <li>Ikkuna näyttää löydetyt ottelut ja kopioi JSONin leikepöydälle.</li>
+    <li>Liitä se Laske-sivun JSON-laatikkoon ja paina <b>Lue JSON</b>. Voit liittää samaan laatikkoon myös Pinnaclen JSONin: Pinnaclen karttakertoimet ja kierrostotal ovat ensisijaisia, Epicbetin pelaajalinjat täydentävät.</li>
+    <li>Valitse ottelu ja kartta, paina <b>Laske arviot</b>. Näet jokaisen pelaajan Epicbet-linjat ja <b>Arvolinjat</b>-listan.</li>
+  </ol>
+</section>
+<script>
+(function () {
+  var b = document.getElementById('bm-copy'), t = document.getElementById('bm-text');
+  if (b && t) b.addEventListener('click', function () {
+    t.select();
+    var ok = false;
+    try { if (navigator.clipboard) { navigator.clipboard.writeText(t.value); ok = true; } else { ok = document.execCommand('copy'); } } catch (e) { ok = false; }
+    b.textContent = ok ? 'Kopioitu ✓' : 'Valitse teksti ja kopioi käsin';
+  });
+})();
+</script>
+{% endblock %}

@@ -277,3 +277,14 @@ details.tablefold > summary::-webkit-details-marker { display: none; }
 
 .grid3 .tile .val { font-size: 1.3rem; }
 .grid3 .tile { padding: 12px; }
+
+/* Epicbetin pelaajalinjat */
+.prow-ep { display: flex; justify-content: space-between; gap: 8px; margin-top: 3px; font-size: .78rem; color: var(--text-2); min-width: 0; }
+.prow-ep .nw { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.prow-ep .epok { color: var(--pos); white-space: nowrap; }
+.altchips { display: flex; flex-wrap: wrap; gap: 8px; }
+.altchip { flex: 1 1 0; min-width: 84px; display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 8px 6px; min-height: 48px; border-radius: 12px; border: 1.5px solid var(--line-strong); background: var(--surface); color: var(--text); font: inherit; cursor: pointer; }
+.altchip small { font-size: .72rem; color: var(--text-2); white-space: nowrap; }
+.altchip.ok { border-color: color-mix(in srgb, var(--pos) 55%, transparent); }
+.altchip.ok small { color: var(--pos); }
+.altchip.on { border-color: var(--accent); background: var(--accent-wash); }

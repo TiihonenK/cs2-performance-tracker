@@ -8,6 +8,15 @@
   <div class="kv" style="margin-bottom:12px"><span>Ennuste <b class="num">{{ p.proj | num(1) }}</b> tappoa</span><span>Hajonta <b class="num">±{{ p.std | num(1) }}</b></span><span>Mallin linja <b class="num">{{ p.line | line_fmt }}</b></span><span>KPR <b class="num">{{ p.kpr | num(2) }}</b></span><span>Muoto <b>{{ p.form }}</b></span><span>Data <b class="num">{{ p.n }}</b> kierrosta</span></div>
 
   <div class="stack">
+    {% if alts %}
+    <div class="field"><span>Epicbetin linjat <span class="muted">(napauta valitaksesi)</span></span>
+      <div class="altchips" id="alt-chips">
+        {% for r in alts %}<button type="button" class="altchip{{ ' on' if alt_sel is not none and r.line == alt_sel }}{{ ' ok' if r.best and r.best.ok }}" data-alt data-line="{{ r.line }}" data-over="{{ r.over or 0 }}" data-under="{{ r.under or 0 }}" data-dir="{{ r.best.direction if r.best else '' }}">
+          <b>{{ r.line | line_fmt | replace('.', ',') }}</b>
+          <small>{% if r.best %}{{ 'Yli' if r.best.direction == 'OVER' else 'Alle' }} {{ r.best.odds | odds_fmt }} · {{ (r.best.ev * 100) | pct(0, true) }}{% endif %}</small></button>{% endfor %}
+      </div>
+    </div>
+    {% endif %}
     <div class="field"><span>Suunta</span>
       <div class="seg dir">
         <input type="radio" name="direction" id="d-under" value="UNDER" {{ 'checked' if default_dir == 'UNDER' }}><label for="d-under">Alle</label>
@@ -19,8 +28,8 @@
         <input type="number" name="line" id="s-line" value="{{ default_line }}" step="0.5" inputmode="decimal"><button class="btn" type="button" data-step="0.5" data-target="s-line" aria-label="Suurenna">+</button></div>
     </div>
     <div class="form-grid">
-      <div class="field"><span>Bookkerin kerroin</span><input type="number" name="odds" id="s-odds" value="1.85" min="1.01" step="any" inputmode="decimal"></div>
-      <div class="field"><span>Vastapuolen kerroin <span class="muted">(0 = ei)</span></span><input type="number" name="opp_odds" id="s-opp" value="0" min="0" step="any" inputmode="decimal"></div>
+      <div class="field"><span>Bookkerin kerroin</span><input type="number" name="odds" id="s-odds" value="{{ default_odds }}" min="1.01" step="any" inputmode="decimal"></div>
+      <div class="field"><span>Vastapuolen kerroin <span class="muted">(0 = ei)</span></span><input type="number" name="opp_odds" id="s-opp" value="{{ default_opp }}" min="0" step="any" inputmode="decimal"></div>
     </div>
     <div class="field"><span>Panos (€)</span>
       <div class="stakerow">

@@ -1,7 +1,8 @@
 {% for m in matches %}
 <button type="button" class="pin-item" data-match='{{ m | tojson_attr }}'>
   <b>{{ m.t1 }} vs {{ m.t2 }}</b>
-  <small>{% if m.map_list %}Kartat {{ m.map_list }}{% if m.has_total %} · kierrostotalit{% endif %}{% else %}Ei karttakertoimia{% endif %}</small>
+  {% if m.tournament or m.start_fi %}<small>{{ m.tournament or '' }}{{ ' · ' if m.tournament and m.start_fi }}{{ m.start_fi or '' }}</small>{% endif %}
+  <small>{% if m.map_list %}Kartat {{ m.map_list }}{% if m.has_total %} · kierrostotalit{% endif %}{% if m.maps_epic %} (Epicbetin kertoimet){% endif %}{% else %}Ei karttakertoimia{% endif %}{% if m.n_players %} · <b>{{ m.n_players }} pelaajaa, {{ m.n_lines }} linjaa</b> (kartat {{ m.pl_maps }}){% endif %}</small>
   {% if m.missing %}<small style="color:var(--warn)">Ei kannassa: {{ m.missing | join(', ') }} (valitse käsin)</small>{% endif %}
 </button>
 {% endfor %}

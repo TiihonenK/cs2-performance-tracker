@@ -22,6 +22,21 @@
 
 <p class="muted" style="margin:0 4px;font-size:.85rem">Napauta pelaajaa kirjataksesi veto.</p>
 
+{% if s.epic_n %}
+<section class="card flush eplist">
+  <div class="team-h"><h2>Arvolinjat</h2><span class="muted" style="font-size:.78rem">Epicbet · {{ s.epic_top | length }} / {{ s.epic_n }} linjaa</span></div>
+  {% for r in s.epic_top[:12] %}
+  <button class="prow" type="button" hx-get="/sim/{{ sid }}/player" hx-vals='{{ {"name": r.player, "line": r.line, "dir": r.direction} | tojson_attr }}' hx-target="#sheet-body" hx-swap="innerHTML">
+    <div class="prow-top"><span class="prow-name">{{ r.player }}</span><span class="prow-proj num" style="color:var(--pos)">{{ (r.ev * 100) | pct(1, true) }}</span></div>
+    <div class="prow-sub"><span class="nw">{{ r.team }} · <b>{{ 'Yli' if r.direction == 'OVER' else 'Alle' }} {{ r.line | line_fmt | replace('.', ',') }}</b> @ {{ r.odds | odds_fmt }}</span><span class="nw">Osuma <b class="num">{{ (r.comb_p * 100) | pct(0) }}</b></span></div>
+  </button>
+  {% else %}
+  <p class="muted" style="padding:12px 16px;margin:0">Yhdelläkään Epicbetin linjalla ei ole arvoa mallin ja historian mukaan.</p>
+  {% endfor %}
+  {% if s.epic_missing %}<p class="muted" style="padding:8px 16px 12px;margin:0;font-size:.8rem">Ei löytynyt kokoonpanosta: {{ s.epic_missing | join(', ') }}</p>{% endif %}
+</section>
+{% endif %}
+
 {% for team, plist in ((s.t1, s.t1_players), (s.t2, s.t2_players)) %}
 <section class="card flush">
   <div class="team-h"><h2>{{ team }}</h2><span class="muted" style="font-size:.78rem">Ennuste · malli</span></div>
@@ -29,6 +44,8 @@
   <button class="prow" type="button" hx-get="/sim/{{ sid }}/player" hx-vals='{{ {"name": p.name} | tojson_attr }}' hx-target="#sheet-body" hx-swap="innerHTML">
     <div class="prow-top"><span class="prow-name">{{ p.name }}</span><span class="prow-proj num">{{ p.proj | num(1) }}</span></div>
     <div class="prow-sub"><span class="nw">KPR {{ p.kpr | num(2) }} · {{ p.form }}</span><span class="nw">Linja <b class="num">{{ p.line | line_fmt }}</b></span></div>
+    {% if p.ep %}<div class="prow-ep"><span class="nw">Epicbet {% for r in p.ep %}{{ r.line | line_fmt | replace('.', ',') }}{{ ' · ' if not loop.last }}{% endfor %}</span>
+      {% if p.ep_best %}<b class="epok">{{ 'Yli' if p.ep_best.direction == 'OVER' else 'Alle' }} {{ p.ep_best_line | line_fmt | replace('.', ',') }} · EV {{ (p.ep_best.ev * 100) | pct(0, true) }}</b>{% else %}<span class="muted nw">ei arvoa</span>{% endif %}</div>{% endif %}
     <div class="pmini"><span class="num">Alle {{ p.p_under | num(0) }} %</span>
       <div class="probbar"><i style="width:{{ p.p_under }}%"></i><i style="width:{{ p.p_over }}%"></i></div>
       <span class="num">{{ p.p_over | num(0) }} % Yli</span></div>
