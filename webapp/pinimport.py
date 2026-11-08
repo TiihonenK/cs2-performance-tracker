@@ -83,6 +83,15 @@ def _num(v):
         return None
 
 
+def _map_source(r):
+    """Kartan tietojen lähde: 'epicbet', 'pinnacle' tai 'mixed' (Pinnaclen voittajakertoimet + Epicbetin kierrostotal)."""
+    if r["ml"] < 0:
+        return "epicbet" if r["tot"] == 0 else "pinnacle"
+    if r["ml"] == 0:
+        return "epicbet"
+    return "mixed" if r["tot"] == 0 else "pinnacle"
+
+
 def merge_matches(docs, teams):
     """-> lista otteluita: dict(t1, t2, key, maps{no: {...}}, players[...], tournament, start, ...)."""
     order, by = [], {}
@@ -98,23 +107,29 @@ def merge_matches(docs, teams):
             src = str(m.get("source") or "pinnacle").lower()
             it = by.get(key)
             if it is None:
-                it = dict(t1=t1, t2=t2, key=f"{t1} vs {t2}", maps={}, map_src={}, players=[], tournament=None,
+                it = dict(t1=t1, t2=t2, key=f"{t1} vs {t2}", maps={}, map_rank={}, players=[], tournament=None,
                           start=None, raw=(raw1, raw2), missing=[x for x in (t1, t2) if x not in teams])
                 by[key] = it
                 order.append(key)
             swapped = (t1.lower() == it["t2"].lower() and t2.lower() == it["t1"].lower())
+            rank = 0 if src == "epicbet" else 1      # Pinnacle (ja muut) voittaa Epicbetin
             for mp in m.get("maps", []) or []:
                 no = _map_no(mp.get("map"))
                 if not no:
                     continue
-                if src == "epicbet" and no in it["maps"] and it["map_src"].get(no) != "epicbet":
-                    continue          # Pinnacle voittaa Epicbetin
                 o1, o2 = _num(mp.get("odds1")), _num(mp.get("odds2"))
                 if swapped:
                     o1, o2 = o2, o1
-                it["maps"][no] = dict(odds1=o1, odds2=o2, total=_num(mp.get("total_line")),
-                                      over=_num(mp.get("over_odds")), under=_num(mp.get("under_odds")))
-                it["map_src"][no] = src
+                tl, ov, un = _num(mp.get("total_line")), _num(mp.get("over_odds")), _num(mp.get("under_odds"))
+                cur = it["maps"].setdefault(no, dict(odds1=None, odds2=None, total=None, over=None, under=None))
+                rk = it["map_rank"].setdefault(no, dict(ml=-1, tot=-1))
+                # Voittajakertoimet ja kierrostotal valitaan erikseen: puuttuva osa täydentyy toisesta lähteestä
+                if o1 and o2 and rank >= rk["ml"]:
+                    cur.update(odds1=o1, odds2=o2)
+                    rk["ml"] = rank
+                if tl is not None and rank >= rk["tot"]:
+                    cur.update(total=tl, over=ov, under=un)
+                    rk["tot"] = rank
             for p in m.get("players", []) or []:
                 ln, name = _num(p.get("line")), p.get("player")
                 no = _map_no(p.get("map"))
@@ -127,13 +142,19 @@ def merge_matches(docs, teams):
     out = []
     for k in order:
         it = by[k]
+        rk = it.pop("map_rank")
+        it["maps"] = {no: v for no, v in it["maps"].items() if v["odds1"] or v["total"] is not None}
+        rk = {no: r for no, r in rk.items() if no in it["maps"]}
         it["map_list"] = ", ".join(sorted(it["maps"]))
         it["has_total"] = any(v.get("total") for v in it["maps"].values())
         it["n_players"] = len({p["player"].lower() for p in it["players"]})
         it["n_lines"] = len(it["players"])
         it["pl_maps"] = ", ".join(sorted({str(p["map"]) for p in it["players"]}))
         it["start_fi"] = fi_time(it["start"]) if it["start"] else None
-        it["maps_epic"] = bool(it["maps"]) and all(v == "epicbet" for v in it["map_src"].values())
+        # maps_epic: kaikki karttatiedot Epicbetiltä; tot_epic: Pinnaclen voittajakertoimet + Epicbetin kierrostotal
+        it["map_src"] = {no: _map_source(r) for no, r in rk.items()}
+        it["maps_epic"] = bool(rk) and all(max(r.values()) == 0 for r in rk.values())
+        it["tot_epic"] = (not it["maps_epic"]) and any(r["tot"] == 0 and r["ml"] > 0 for r in rk.values())
         out.append(it)
     return out
 

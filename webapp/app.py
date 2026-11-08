@@ -17,7 +17,7 @@ from fastapi.templating import Jinja2Templates
 
 from players_props import MAP_NAMES
 
-from . import db, pinimport, sim, stats
+from . import db, pinimport, pinnacle_fetch, sim, stats
 
 BASE = Path(__file__).parent
 app = FastAPI(title="CS2 Vetomalli", docs_url=None, redoc_url=None)
@@ -185,12 +185,15 @@ def calc(request: Request, team1: str = Form(""), team2: str = Form(""), odds1: 
     return render(request, "partials/sim_result.html", sid=sid, s=s)
 
 
-@app.get("/epicbet", response_class=HTMLResponse)
-def epicbet_page(request: Request):
-    """Asennussivu: kirjanmerkki joka hakee Epicbetin CS2-pelaajalinjat yhdellä klikkauksella."""
+@app.get("/kirjanmerkit", response_class=HTMLResponse)
+@app.get("/epicbet", response_class=HTMLResponse)       # vanha osoite toimii edelleen
+def bookmarklets_page(request: Request):
+    """Asennussivu: kirjanmerkit jotka hakevat Pinnaclen karttakertoimet ja Epicbetin pelaajalinjat yhdellä klikkauksella."""
     from urllib.parse import quote
-    code = (Path(__file__).parent / "static" / "epicbet_cs2.min.js").read_text(encoding="utf-8")
-    return render(request, "epicbet.html", bm_url="javascript:" + quote(code, safe=""), **page_ctx("calc"))
+    static = Path(__file__).parent / "static"
+    bms = [dict(name=name, url="javascript:" + quote((static / fn).read_text(encoding="utf-8"), safe=""))
+           for name, fn in (("Pinnacle CS2", "pinnacle_cs2.min.js"), ("Epicbet CS2", "epicbet_cs2.min.js"))]
+    return render(request, "epicbet.html", bms=bms, **page_ctx("calc"))
 
 
 @app.post("/pinnacle", response_class=HTMLResponse)
@@ -205,6 +208,28 @@ def pinnacle(request: Request, text: str = Form("")):
         return render(request, "partials/error.html",
                       problems=['JSON:sta ei löytynyt yhtään ottelua ("matches"-lista puuttuu tai on tyhjä).'])
     return render(request, "partials/pinnacle_list.html", matches=items)
+
+
+@app.post("/hae/pinnacle")
+def hae_pinnacle(text: str = Form("")):
+    """Hakee Pinnaclen CS2-karttakertoimet palvelimelta ja palauttaa JSON-laatikon uuden sisällön:
+    aiemmin haetut Pinnacle-haut (source pinnacle + fetched) korvataan, muut dokumentit (Epicbet, kuvakaappaus-JSON) säilyvät."""
+    try:
+        old = pinimport.parse_documents(text) if text.strip() else []
+    except json.JSONDecodeError as e:
+        return JSONResponse({"ok": False, "error": f"JSON-laatikon sisältö ei ole kelvollista JSONia ({e}). Tyhjennä laatikko tai korjaa se ensin."}, status_code=400)
+    try:
+        doc = pinnacle_fetch.get_cs2()
+    except pinnacle_fetch.FetchError as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=502)
+    except Exception as e:      # odottamaton: näytetään käyttäjälle, ei kaadeta
+        return JSONResponse({"ok": False, "error": f"Pinnacle-haku epäonnistui odottamattomasti: {type(e).__name__}: {e}"}, status_code=500)
+    n, total = len(doc["matches"]), doc["cs2_matches_total"]
+    res = {"ok": True, "n": n, "skipped": total - n, "total": total, "fetched": doc["fetched"], "upcoming": [u["name"] for u in doc["upcoming"][:5]]}
+    if n:
+        kept = [d for d in old if not (isinstance(d, dict) and d.get("source") == "pinnacle" and d.get("fetched"))]
+        res["text"] = "\n".join(json.dumps(d, ensure_ascii=False, separators=(",", ":")) for d in [doc] + kept)
+    return res
 
 
 @app.get("/sim/{sid}/player", response_class=HTMLResponse)

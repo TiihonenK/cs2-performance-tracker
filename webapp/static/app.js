@@ -304,9 +304,11 @@
     if (!pinSel) { n.hidden = true; n.textContent = ''; return; }
     var no = curMapNo(), has = !!(pinSel.maps && pinSel.maps[no]);
     var pl = pinLines().length, plTxt = (pinSel.players && pinSel.players.length) ? (pl ? (' · ' + pl + ' pelaajalinjaa') : ' · ei pelaajalinjoja tälle kartalle') : '';
-    var src = (pinSel.map_src && pinSel.map_src[no] === 'epicbet') ? 'Epicbet' : 'Pinnacle';
+    var ms = pinSel.map_src && pinSel.map_src[no];
+    var src = ms === 'epicbet' ? 'Epicbet' : (ms === 'mixed' ? 'Pinnacle + Epicbetin kierrostotal' : 'Pinnacle');
+    var noMl = has && !pinSel.maps[no].odds1 ? ' (voittajakertoimia ei ole, oletus 1.85)' : '';
     n.hidden = false; n.className = 'muted' + (has ? '' : ' warnnote');
-    n.textContent = has ? (src + ': ' + pinSel.t1 + ' vs ' + pinSel.t2 + ' · kartta ' + no + ' kertoimet käytössä' + plTxt)
+    n.textContent = has ? (src + ': ' + pinSel.t1 + ' vs ' + pinSel.t2 + ' · kartta ' + no + ' kertoimet käytössä' + noMl + plTxt)
                         : ('JSON:ssa ei ole kartan ' + no + ' kertoimia (kertoimet palautettu oletukseen)' + plTxt);
   }
   function applyPin() {
@@ -461,6 +463,25 @@
     try { localStorage.removeItem(PIN_KEY); localStorage.removeItem(PIN_TS); } catch (err) { /* ei tallennusta */ }
     pinSel = null; pinWanted = ''; pinNote(); calcSave();
     pinStatus(); toast({ msg: 'Pinnaclen JSON tyhjennetty' });
+  });
+  /* ---------- Hae Pinnacle-kertoimet palvelimelta ---------- */
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest('#pin-fetch'); if (!b || b.disabled) return;
+    var ta = $('#pin-text'), st = $('#pin-fetch-status'), label = b.textContent;
+    function say(msg, warn) { if (!st) return; st.hidden = false; st.textContent = msg; st.style.color = warn ? 'var(--warn)' : ''; }
+    b.disabled = true; b.textContent = 'Haetaan…'; say('Haetaan Pinnaclen CS2-otteluita…');
+    var body = new URLSearchParams(); body.set('text', ta ? ta.value : '');
+    fetch('/hae/pinnacle', { method: 'POST', body: body })
+      .then(function (r) { return r.json().catch(function () { return { ok: false, error: 'Palvelin vastasi virheellisesti (HTTP ' + r.status + ').' }; }); })
+      .then(function (j) {
+        if (!j.ok) { say(j.error || 'Haku epäonnistui.', true); return; }
+        var d = new Date(j.fetched), hm = ('0' + d.getHours()).slice(-2) + '.' + ('0' + d.getMinutes()).slice(-2);
+        if (!j.n) { say('Pinnaclella ei ole nyt CS2-otteluita karttamarkkinoilla' + (j.total ? ' (' + j.total + ' ottelua pelkillä ottelukertoimilla)' : '') + '.', true); return; }
+        say('Haettu ' + j.n + ' ottelua klo ' + hm + (j.skipped ? ' · ' + j.skipped + ' ohitettu (vain ottelukertoimet: ' + (j.upcoming || []).slice(0, 3).join(', ') + (j.skipped > 3 ? ' …' : '') + ')' : '') + '.');
+        if (ta) { ta.value = j.text; var rb = $('#pin-read'); if (rb && window.htmx) htmx.trigger(rb, 'click'); }
+      })
+      .catch(function () { say('Yhteys palvelimeen katkesi. Yritä uudelleen.', true); })
+      .then(function () { b.disabled = false; b.textContent = label; });
   });
   (function () { var ta = $('#pin-text'); if (ta) ta.addEventListener('input', pinStatus); })();
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function () { setTimeout(pinRestore, 0); });
