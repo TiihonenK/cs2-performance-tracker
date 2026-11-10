@@ -160,7 +160,7 @@ def _fl(v, default=0.0):
 def calc(request: Request, team1: str = Form(""), team2: str = Form(""), odds1: str = Form("1.85"),
          odds2: str = Form("1.85"), kartta: str = Form("Kartta 1"), map_name: str = Form(""),
          total_line: str = Form("0"), total_over: str = Form("0"), total_under: str = Form("0"),
-         lines: str = Form(""), epic_tournament: str = Form("")):
+         lines: str = Form(""), epic_tournament: str = Form(""), match_start: str = Form("")):
     teams = set(db.team_names())
     o1, o2 = _fl(odds1, 0), _fl(odds2, 0)
     problems = []
@@ -181,7 +181,8 @@ def calc(request: Request, team1: str = Form(""), team2: str = Form(""), odds1: 
     ep = [x for x in ep if isinstance(x, dict)][:400] if isinstance(ep, list) else []
     sid, s = sim.run(team1, team2, o1, o2, kartta, map_name or None,
                      _fl(total_line), _fl(total_over), _fl(total_under),
-                     epic_lines=ep, epic_tournament=epic_tournament or None)
+                     epic_lines=ep, epic_tournament=epic_tournament or None,
+                     match_start=(match_start.strip()[:40] or None))
     return render(request, "partials/sim_result.html", sid=sid, s=s)
 
 
@@ -259,8 +260,16 @@ def sim_player(request: Request, sid: str, name: str, line: str = "", dir: str =
         d_line, d_dir, d_odds = pick["line"], opt["direction"], opt["odds"]
         d_opp = (pick["under"] if opt["direction"] == "OVER" else pick["over"]) or 0
     ev = sim.evaluate(s, name, d_dir, d_line, d_odds, d_opp or None, s.get("epic_tournament"))
+    today = datetime.now().strftime("%Y-%m-%d")
+    # Vedon päivämäärä oletuksena ottelun pelipäivä (Suomen aika), jotta etukäteen lyöty veto kirjautuu ottelun päivälle.
+    # Menneelle päivälle ei oletusta: silloin tämä päivä.
+    ms = s.get("match_start")
+    mdate = pinimport.fi_date(ms) if ms else None
+    from_match = bool(mdate and mdate >= today)
     return render(request, "partials/player_sheet.html", sid=sid, s=s, p=p, ev=ev,
-                  tournaments=db.active_tournament_names(), today=datetime.now().strftime("%Y-%m-%d"),
+                  tournaments=db.active_tournament_names(), today=today,
+                  default_date=(mdate if from_match else today),
+                  match_when=(pinimport.fi_time(ms) if from_match else None),
                   default_dir=d_dir, default_line=d_line, default_odds=d_odds, default_opp=d_opp, alts=rows,
                   alt_sel=(pick["line"] if pick else None), default_tournament=s.get("epic_tournament"))
 

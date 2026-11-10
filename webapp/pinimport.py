@@ -39,8 +39,8 @@ def _last_sunday(year, month):
     return d - timedelta(days=(d.weekday() + 1) % 7)
 
 
-def fi_time(iso):
-    """ISO-aika (UTC) -> 'su 8.11. klo 16.00' Suomen ajassa (EET/EEST ilman tz-tietokantaa)."""
+def _fi_local(iso):
+    """ISO-aika (UTC) -> Suomen paikallinen aika (EET/EEST ilman tz-tietokantaa) datetime-oliona, tai None."""
     try:
         dt = datetime.fromisoformat(str(iso).replace("Z", "+00:00"))
         if dt.tzinfo is None:
@@ -49,11 +49,24 @@ def fi_time(iso):
         y = dt.year
         dst_from = _last_sunday(y, 3).replace(hour=1)
         dst_to = _last_sunday(y, 10).replace(hour=1)
-        loc = dt + timedelta(hours=3 if dst_from <= dt < dst_to else 2)
-        wd = ["ma", "ti", "ke", "to", "pe", "la", "su"][loc.weekday()]
-        return f"{wd} {loc.day}.{loc.month}. klo {loc.hour}.{loc.minute:02d}"
+        return dt + timedelta(hours=3 if dst_from <= dt < dst_to else 2)
     except (ValueError, TypeError):
         return None
+
+
+def fi_time(iso):
+    """ISO-aika (UTC) -> 'su 8.11. klo 16.00' Suomen ajassa."""
+    loc = _fi_local(iso)
+    if loc is None:
+        return None
+    wd = ["ma", "ti", "ke", "to", "pe", "la", "su"][loc.weekday()]
+    return f"{wd} {loc.day}.{loc.month}. klo {loc.hour}.{loc.minute:02d}"
+
+
+def fi_date(iso):
+    """ISO-aika (UTC) -> 'YYYY-MM-DD' Suomen ajassa (ottelun pelipäivä), tai None."""
+    loc = _fi_local(iso)
+    return loc.strftime("%Y-%m-%d") if loc is not None else None
 
 
 def parse_documents(text):

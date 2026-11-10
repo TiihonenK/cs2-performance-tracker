@@ -43,7 +43,7 @@ def get(sid):
 
 
 def run(team1, team2, odds1, odds2, kartta, map_name=None, total_line=0.0, total_over=0.0,
-        total_under=0.0, n_sims=10000, epic_lines=None, epic_tournament=None):
+        total_under=0.0, n_sims=10000, epic_lines=None, epic_tournament=None, match_start=None):
     """Palauttaa (sim_id, sim_dict). Sama logiikka kuin dashboard.py:n 'Laske arviot'."""
     p1, p2 = 1 / odds1, 1 / odds2
     prob1, prob2 = p1 / (p1 + p2), p2 / (p1 + p2)
@@ -86,6 +86,7 @@ def run(team1, team2, odds1, odds2, kartta, map_name=None, total_line=0.0, total
         t1_players=rows(team1, t1_sim), t2_players=rows(team2, t2_sim), created=time.time(),
     )
     sim["players"] = {p["name"]: p for p in sim["t1_players"] + sim["t2_players"]}
+    sim["match_start"] = match_start      # ottelun alkamisaika (ISO, UTC) kirjan JSON:sta, jos ottelu valittiin listasta
     attach_lines(sim, epic_lines or [], epic_tournament)
     return _put(sim), sim
 

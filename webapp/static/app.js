@@ -406,6 +406,7 @@
       var L = pinLines();
       e.detail.parameters.lines = L.length ? JSON.stringify(L) : '';
       e.detail.parameters.epic_tournament = (L.length && pinSel.tournament) ? pinSel.tournament : '';
+      e.detail.parameters.match_start = (pinSel && pinSel.start) ? pinSel.start : '';   // vedon päivämäärän oletus
     });
     document.body.addEventListener('htmx:afterSwap', function (e) {
       var t = e.detail.target;

@@ -46,7 +46,8 @@
           <option value="">{{ 'Valitse turnaus' if tournaments else 'Ei aktiivisia turnauksia - luo ensin' }}</option>
           {% for t in tournaments %}<option>{{ t }}</option>{% endfor %}
         </select></div>
-      <div class="field"><span>Päivämäärä</span><input type="date" name="bet_date" value="{{ today }}"></div>
+      <div class="field"><span>Päivämäärä</span><input type="date" name="bet_date" value="{{ default_date or today }}">
+        {% if match_when %}<small class="muted">Ottelu {{ match_when }}</small>{% endif %}</div>
     </div>
     <button class="btn primary block" type="submit" {{ 'disabled' if not tournaments }}>Tallenna veto</button>
   </div>
