@@ -13,7 +13,7 @@
     <div class="field"><span>{{ (s.books[0] | book_label ~ 'in linjat') if not multi else 'Pelaajalinjat' }} <span class="muted">(napauta valitaksesi)</span></span>
       <div class="altchips" id="alt-chips">
         {% for r in alts %}<button type="button" class="altchip{{ ' on' if alt_sel is not none and r.line == alt_sel and r.book == alt_book }}{{ ' ok' if r.best and r.best.ok }}" data-alt data-line="{{ r.line }}" data-over="{{ r.over or 0 }}" data-under="{{ r.under or 0 }}" data-dir="{{ r.best.direction if r.best else '' }}" data-book="{{ r.book }}">
-          <b>{{ r.line | line_fmt | replace('.', ',') }}</b>{% if multi %}<small class="bk">{{ r.book | book_label }}</small>{% endif %}
+          <b>{{ r.line | line_fmt | replace('.', ',') }}{% if r.far %} ⚠{% endif %}</b>{% if multi %}<small class="bk">{{ r.book | book_label }}</small>{% endif %}
           <small>{% if r.best %}{{ 'Yli' if r.best.direction == 'OVER' else 'Alle' }} {{ r.best.odds | odds_fmt }} · {{ (r.best.ev * 100) | pct(0, true) }}{% endif %}</small></button>{% endfor %}
       </div>
     </div>

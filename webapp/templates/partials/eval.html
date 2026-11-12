@@ -9,6 +9,12 @@
   {% if ev.market %}
   <div class="kv"><span>Markkina (marginaali {{ ev.market.margin | num(1) }} % poistettu) <b>{{ (ev.market.p * 100) | pct(1) }}</b></span><span>Malli vs markkina <b class="{{ ev.market.diff | tone }}">{{ ev.market.diff | pct(1, true) }}-yks.</b></span></div>
   {% endif %}
+  {% if ev.verdict and ev.verdict.far %}
+  <div class="banner warn" role="status">
+    <svg class="icon" style="width:20px;height:20px" aria-hidden="true"><use href="#i-alert"/></svg>
+    <span>Linja {{ ev.line | line_fmt }} on kaukana ennusteesta ({{ ev.proj | num(1) }} tappoa). Tarkista, että markkina on koko kartan tapot (ei esim. AWP-tapot).</span>
+  </div>
+  {% endif %}
   {% if ev.verdict %}
   <div class="verdict {{ 'ok' if ev.verdict.ok else 'no' }}" role="status" aria-label="{{ 'Lyö' if ev.verdict.ok else 'Älä lyö' }}">
     <svg class="icon vi" aria-hidden="true"><use href="#{{ 'i-check' if ev.verdict.ok else 'i-x' }}"/></svg>

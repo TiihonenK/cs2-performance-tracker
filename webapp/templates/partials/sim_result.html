@@ -34,6 +34,7 @@
   <p class="muted" style="padding:12px 16px;margin:0">Yhdelläkään linjalla ei ole arvoa mallin ja historian mukaan.</p>
   {% endfor %}
   {% if s.epic_missing %}<p class="muted" style="padding:8px 16px 12px;margin:0;font-size:.8rem">Ei löytynyt kokoonpanosta: {{ s.epic_missing | join(', ') }}</p>{% endif %}
+  {% if s.epic_far %}<p class="muted" style="padding:8px 16px 12px;margin:0;font-size:.8rem">⚠ {{ s.epic_far }} linjaa on kaukana ennusteesta (alle 0,55 × tai yli 1,8 × ennuste), eikä niitä lasketa arvolinjoiksi. Todennäköisesti toinen markkina (esim. AWP-tapot) tai ennuste on pielessä.</p>{% endif %}
 </section>
 {% endif %}
 

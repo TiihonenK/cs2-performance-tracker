@@ -253,8 +253,9 @@ def sim_player(request: Request, sid: str, name: str, line: str = "", dir: str =
         if pick is None and p.get("ep_best_line") is not None:
             same = [r for r in rows if r["line"] == p["ep_best_line"]]
             pick = next((r for r in same if r["book"] == p.get("ep_best_book")), None) or (same[0] if same else None)
-        if pick is None:      # ei arvoa: lähin tasakertoimiseen linja
-            pick = min(rows, key=lambda r: abs((r["over"] or 2) - (r["under"] or 2)))
+        if pick is None:      # ei arvoa: lähin tasakertoimiseen linja (kaukana ennusteesta olevat vasta viimeisenä)
+            near = [r for r in rows if not r.get("far")] or rows
+            pick = min(near, key=lambda r: abs((r["over"] or 2) - (r["under"] or 2)))
     d_line, d_dir, d_odds, d_opp = p["line"], "UNDER" if p["p_under"] >= p["p_over"] else "OVER", 1.85, 0
     if pick and pick["opts"]:
         opt = next((o for o in pick["opts"] if o["direction"] == dir), None) if dir in ("OVER", "UNDER") else None

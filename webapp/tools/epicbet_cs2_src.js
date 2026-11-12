@@ -30,7 +30,9 @@ async function epicbetCS2(opts) {
   const matches = [];
   for (const m of wanted) {
     const sb = await get('sport-base/match.getSidebets', { matchId: m.id, language: 'fi', country: 'FI', marketType: 'players' });
-    const groups = groupsOf(sb).filter(g => g.viewType === 'PlayerTotals' && /tap/i.test(g.name) && !/pääosum|headshot/i.test(g.name) && mapNo(g.name));
+    // Koko kartan tapot = "N. kartta: <pelaaja> Tapot". Alalajit pois: "N. kartta: ZywOo AWP Tapot" (linja ~6,5), pääosumat, HE-/pistooli-/veitsitapot, ensimmäiset tapot, puoliajat.
+    const SUBKILLS = /pääosum|headshot|\bawp\b|\bhe\b|pistoo|pistol|veitsi|knife|first|ensimm|puoli|half/i;
+    const groups = groupsOf(sb).filter(g => g.viewType === 'PlayerTotals' && /tap/i.test(g.name) && !SUBKILLS.test(g.name) && mapNo(g.name));
     const markets = groups.flatMap(g => (g.markets || []).map(mk => ({ g, mk })));
     const odds = await oddsOf(markets.map(x => x.mk.id));
     const pby = sb.playersById || {};

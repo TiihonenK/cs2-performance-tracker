@@ -91,9 +91,23 @@ def run(team1, team2, odds1, odds2, kartta, map_name=None, total_line=0.0, total
     return _put(sim), sim
 
 
+FAR_LOW, FAR_HIGH = 0.55, 1.8    # linja tätä pienempi/suurempi kuin ennuste -> ei arvoa (ks. line_far)
+
+
+def line_far(proj, line):
+    """Linja kaukana mallin ennusteesta (alle 0,55 x tai yli 1,8 x ennuste): kirjan koko kartan tappolinja on aina
+    lähellä keskiarvoa, joten tämä on todennäköisesti toinen markkina (esim. AWP-tapot, linja ~6,5) tai ennuste on pielessä.
+    Tällaista linjaa ei lasketa arvolinjaksi eikä tuomio voi olla Lyö."""
+    try:
+        return bool(proj and proj > 0 and (float(line) < FAR_LOW * proj or float(line) > FAR_HIGH * proj))
+    except (TypeError, ValueError):
+        return False
+
+
 def _line_options(sim, name, line, over, under, tournament):
     """Molemmat suunnat annetulla linjalla ja kertoimilla: mallin p, yhdistetty p, EV ja onko arvoa."""
     p = sim["players"][name]
+    far = line_far(p.get("proj"), line)
     p_over, p_under, _, _ = kills_probability_at_line(p["kills"], line)
     cal = get_calibration()
     opts = []
@@ -102,7 +116,7 @@ def _line_options(sim, name, line, over, under, tournament):
             continue
         comb_p, ev, cal_p, _w = _combined(mp, odds, direction, tournament, cal)
         opts.append(dict(direction=direction, odds=float(odds), model_p=mp, comb_p=comb_p, ev=ev,
-                         ok=bool(ev >= bc.MIN_EV and mp >= MODEL_P_FLOOR)))
+                         ok=bool(ev >= bc.MIN_EV and mp >= MODEL_P_FLOOR and not far)))
     return opts
 
 
@@ -110,7 +124,7 @@ def attach_lines(sim, lines, tournament=None):
     """Liittää kirjojen (Epicbet, Unibet) pelaajalinjat simulaatioon: sim['epic'][pelaaja] = [{book, line, over, under, opts, best}],
     sim['epic_top'] = arvolinjat EV-järjestyksessä, sim['epic_missing'] = nimet joita ei löytynyt kokoonpanosta,
     sim['books'] = linjoja antaneet kirjat. (Nimi 'epic' on jäänne ajalta jolloin lähteenä oli vain Epicbet.)"""
-    sim["epic"], sim["epic_top"], sim["epic_missing"], sim["epic_n"], sim["books"] = {}, [], [], 0, []
+    sim["epic"], sim["epic_top"], sim["epic_missing"], sim["epic_n"], sim["books"], sim["epic_far"] = {}, [], [], 0, [], 0
     sim["epic_tournament"] = tournament
     if not lines:
         return
@@ -128,8 +142,10 @@ def attach_lines(sim, lines, tournament=None):
         oks = [o for o in opts if o["ok"]]
         best = max(oks, key=lambda o: o["ev"]) if oks else (max(opts, key=lambda o: o["ev"]) if opts else None)
         book = ln.get("book") or "epicbet"
-        sim["epic"].setdefault(nm, []).append(dict(book=book, line=float(line), over=over, under=under, opts=opts, best=best))
+        far = line_far(sim["players"][nm].get("proj"), line)
+        sim["epic"].setdefault(nm, []).append(dict(book=book, line=float(line), over=over, under=under, opts=opts, best=best, far=far))
         sim["epic_n"] += 1
+        sim["epic_far"] += 1 if far else 0
         if book not in sim["books"]:
             sim["books"].append(book)
     sim["books"].sort(key=lambda b: (b != "epicbet", b))
@@ -229,8 +245,14 @@ def evaluate(sim, player, direction, line, odds, opp_odds=None, tournament=None)
         # Kalibrointi on sovitettu vetoihin joissa mallin arvio oli ~44-79 %. Alle sen malli
         # sanoo itse ettei veto osu: ei lyödä.
         out_of_range = model_p < MODEL_P_FLOOR
-        ok = (comb_ev >= bc.MIN_EV) and not out_of_range
-        if out_of_range:
+        far = line_far(p.get("proj"), line)
+        ok = (comb_ev >= bc.MIN_EV) and not out_of_range and not far
+        if far:
+            min_o = None
+            why = (f"Linja {line:g} on kaukana mallin ennusteesta ({p['proj']:.1f} tappoa). Kirjan koko kartan tappolinja on "
+                   f"lähellä keskiarvoa, joten kyseessä on todennäköisesti toinen markkina (esim. AWP-tapot) tai ennuste on pielessä. "
+                   f"Tarkista markkina ennen vetoa.")
+        elif out_of_range:
             min_o = None
             why = (f"Malli arvioi osumatodennäköisyydeksi vain {model_p * 100:.1f} %. Kalibrointi on "
                    f"sovitettu vetoihin joissa mallin arvio oli vähintään {MODEL_P_FLOOR * 100:.0f} %, "
@@ -247,7 +269,7 @@ def evaluate(sim, player, direction, line, odds, opp_odds=None, tournament=None)
                 why += " Pienissä turnauksissa / karsinnoissa vetosi ovat hävinneet selvästi."
         out["verdict"] = dict(ok=ok, cal_p=cal_p, comb_p=comb_p, ev=comb_ev, hist_ev=hist_ev, why=why,
                               min_odds=min_o, min_ev=bc.MIN_EV * 100, breakeven=breakeven * 100,
-                              small=bc.is_small_event(tournament), out_of_range=out_of_range,
+                              small=bc.is_small_event(tournament), out_of_range=out_of_range, far=far,
                               model_weight=w, gap=gap * 100, outlier=abs(gap) > MODEL_OUTLIER,
                               capped=abs(gap) > MODEL_CAP)
         # Näytettävät luvut: yhdistetty arvio. Jos malli itse arvioi osuman alle rajan (punainen
