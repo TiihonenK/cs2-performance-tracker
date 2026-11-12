@@ -24,7 +24,9 @@
           <b>Epicbet</b>
           <button class="btn sm ghost" id="epic-clear" type="button" hidden>Tyhjennä</button>
         </div>
-        <textarea name="epic_text" id="epic-text" placeholder='Liitä tähän Epicbet CS2 -kirjanmerkin kopioima JSON (pelaajalinjat, ≤ 12 h ennen alkua)'></textarea>
+        <button class="btn primary" id="epic-fetch" type="button">Hae Epicbet-kertoimet</button>
+        <small class="muted" id="epic-fetch-status" hidden></small>
+        <textarea name="epic_text" id="epic-text" placeholder='Epicbetin JSON (täyttyy napista jos Epicbet sallii palvelinhaun, muuten liitä Epicbet CS2 -kirjanmerkin kopioima JSON; pelaajalinjat ≤ 12 h ennen alkua)'></textarea>
         <small class="muted" id="epic-meta" hidden></small>
       </div>
 

@@ -49,7 +49,7 @@ def hint(res):
     if st is None:
         return "Yhteys ei onnistunut (%s). Tarkista verkko/DNS; aikakatkaisu voi tarkoittaa palomuuria tai IP-estoa." % res["error"]
     if "just a moment" in body or "cf-chl" in body or "challenge-platform" in body or "attention required" in body:
-        return "Cloudflaren tarkistussivu: palvelu vaatii selaimen (ei pelkkä HTTP-pyyntö). Tarvittaisiin FlareSolverr tai selainpohjainen haku."
+        return "Cloudflaren tarkistussivu: palvelu vaatii selaimen (ei pelkkä HTTP-pyyntö). Palvelimen haku ei onnistu; käytä kirjanmerkkiä selaimessa (tarkistusta ei kierretä)."
     if st in (401,):
         return "HTTP 401: rajapinta vaatii avaimen tai kirjautumisen."
     if st == 403:

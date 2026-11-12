@@ -17,7 +17,7 @@ from fastapi.templating import Jinja2Templates
 
 from players_props import MAP_NAMES
 
-from . import db, pinimport, pinnacle_fetch, sim, stats, unibet_fetch
+from . import db, epicbet_fetch, pinimport, pinnacle_fetch, sim, stats, unibet_fetch
 
 BASE = Path(__file__).parent
 app = FastAPI(title="CS2 Vetomalli", docs_url=None, redoc_url=None)
@@ -270,6 +270,37 @@ def hae_unibet(text: str = Form("")):
 def hae_unibet_diag():
     """Viimeisimmän Unibet-haun diagnostiikka (reitit, kill-markkinoiden nimet, raakanäyte, virheet) – liitettäväksi vianetsintään."""
     return JSONResponse(unibet_fetch.last_diag())
+
+
+@app.post("/hae/epicbet")
+def hae_epicbet(text: str = Form("")):
+    """Yrittää hakea Epicbetin CS2-pelaajalinjat palvelimelta (tavallinen pyyntö, ei bottisuojan kiertoa). Palauttaa Epicbet-laatikon uuden sisällön:
+    aiemmin haetut Epicbet-haut (source epicbet + fetched) korvataan, muut dokumentit säilyvät. Cloudflare-esto -> 502 + selkeä viesti."""
+    try:
+        old = pinimport.parse_documents(text) if text.strip() else []
+    except json.JSONDecodeError as e:
+        return JSONResponse({"ok": False, "error": f"Epicbet-laatikon sisältö ei ole kelvollista JSONia ({e}). Tyhjennä laatikko tai korjaa se ensin."}, status_code=400)
+    try:
+        doc = epicbet_fetch.get_cs2()
+    except epicbet_fetch.FetchError as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=502)
+    except Exception as e:      # odottamaton: näytetään käyttäjälle, ei kaadeta
+        return JSONResponse({"ok": False, "error": f"Epicbet-haku epäonnistui odottamattomasti: {type(e).__name__}: {e}"}, status_code=500)
+    n, total = len(doc["matches"]), doc["cs2_matches_total"]
+    lines = sum(len(m["players"]) for m in doc["matches"])
+    res = {"ok": True, "n": n, "lines": lines, "total": total, "fetched": doc["fetched"],
+           "upcoming": [u["name"] for u in doc["upcoming"][:5] if u.get("name")], "errors": len((doc.get("diag") or {}).get("errors", []))}
+    if n:
+        slim = {k: v for k, v in doc.items() if k != "diag"}
+        kept = [x for x in old if not (isinstance(x, dict) and x.get("source") == "epicbet" and x.get("fetched"))]
+        res["text"] = "\n".join(json.dumps(x, ensure_ascii=False, separators=(",", ":")) for x in [slim] + kept)
+    return res
+
+
+@app.get("/hae/epicbet/diag")
+def hae_epicbet_diag():
+    """Viimeisimmän Epicbet-haun diagnostiikka (virheet, ottelut)."""
+    return JSONResponse(epicbet_fetch.last_diag())
 
 
 @app.get("/sim/{sid}/player", response_class=HTMLResponse)

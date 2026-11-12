@@ -538,6 +538,16 @@
         return { msg: 'Haettu ' + j.n + ' ottelua klo ' + hm + (j.skipped ? ' · ' + j.skipped + ' ohitettu (vain ottelukertoimet: ' + (j.upcoming || []).slice(0, 3).join(', ') + (j.skipped > 3 ? ' …' : '') + ')' : '') + '.' };
       }
     },
+    'epic-fetch': {
+      url: '/hae/epicbet', ta: '#epic-text', st: '#epic-fetch-status', busy: 'Haetaan Epicbetin CS2-otteluita ja pelaajalinjoja (voi kestää 10–20 s)…',
+      done: function (j, hm) {
+        if (!j.n) {
+          if (!j.total) return { warn: true, msg: 'Epicbetin CS2-otteluita ei löytynyt rajapinnasta.' };
+          return { warn: true, msg: 'Epicbetillä on ' + j.total + ' CS2-ottelua, mutta pelaajamarkkinat eivät ole vielä auki' + ((j.upcoming || []).length ? ' (lähimmät: ' + j.upcoming.slice(0, 3).join(', ') + ')' : '') + '. Ne aukeavat n. 12 h ennen alkua.' };
+        }
+        return { msg: 'Haettu ' + j.n + ' ottelua, ' + j.lines + ' pelaajalinjaa klo ' + hm + (j.errors ? ' · ' + j.errors + ' ottelun haku epäonnistui' : '') + '.', warn: !!j.errors };
+      }
+    },
     'unibet-fetch': {
       url: '/hae/unibet', ta: '#unibet-text', st: '#unibet-fetch-status', busy: 'Haetaan Unibetin CS2-otteluita ja pelaajalinjoja (voi kestää 10–20 s)…',
       done: function (j, hm) {
@@ -550,7 +560,7 @@
     }
   };
   document.addEventListener('click', function (e) {
-    var b = e.target.closest('#pin-fetch, #unibet-fetch'); if (!b || b.disabled) return;
+    var b = e.target.closest('#pin-fetch, #epic-fetch, #unibet-fetch'); if (!b || b.disabled) return;
     var cfg = FETCHES[b.id], ta = $(cfg.ta), st = $(cfg.st), label = b.textContent;
     function say(msg, warn) { if (!st) return; st.hidden = false; st.textContent = msg; st.style.color = warn ? 'var(--warn)' : ''; }
     b.disabled = true; b.textContent = 'Haetaan…'; say(cfg.busy);
