@@ -6,7 +6,7 @@
 
 <section class="card">
   <details class="fold" id="pin-fold">
-    <summary>Kertoimet (Pinnacle ja Epicbet) <span class="badge" id="pin-count" hidden></span></summary>
+    <summary>Kertoimet (Pinnacle, Epicbet ja Unibet) <span class="badge" id="pin-count" hidden></span></summary>
     <div class="stack">
       <div class="stack" style="gap:8px">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
@@ -28,8 +28,17 @@
         <small class="muted" id="epic-meta" hidden></small>
       </div>
 
-      <button class="btn" id="pin-read" type="button" hx-post="/pinnacle" hx-include="#pin-text, #epic-text" hx-target="#pin-list">Lue JSON</button>
-      <small class="muted"><a href="/kirjanmerkit">Asenna kirjanmerkit: Pinnacle (karttakertoimet) ja Epicbet (pelaajalinjat) yhdellä klikkauksella →</a></small>
+      <div class="stack" style="gap:8px">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+          <b>Unibet</b>
+          <button class="btn sm ghost" id="unibet-clear" type="button" hidden>Tyhjennä</button>
+        </div>
+        <textarea name="unibet_text" id="unibet-text" placeholder='Liitä tähän Unibet CS2 -kirjanmerkin kopioima JSON (pelaajalinjat)'></textarea>
+        <small class="muted" id="unibet-meta" hidden></small>
+      </div>
+
+      <button class="btn" id="pin-read" type="button" hx-post="/pinnacle" hx-include="#pin-text, #epic-text, #unibet-text" hx-target="#pin-list">Lue JSON</button>
+      <small class="muted"><a href="/kirjanmerkit">Asenna kirjanmerkit: Pinnacle (karttakertoimet) sekä Epicbet ja Unibet (pelaajalinjat) yhdellä klikkauksella →</a></small>
       <div id="pin-list"></div>
     </div>
   </details>

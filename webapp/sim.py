@@ -107,9 +107,10 @@ def _line_options(sim, name, line, over, under, tournament):
 
 
 def attach_lines(sim, lines, tournament=None):
-    """Liittää kirjan (Epicbet) pelaajalinjat simulaatioon: sim['epic'][pelaaja] = [{line, over, under, opts, best}],
-    sim['epic_top'] = arvolinjat EV-järjestyksessä, sim['epic_missing'] = nimet joita ei löytynyt kokoonpanosta."""
-    sim["epic"], sim["epic_top"], sim["epic_missing"], sim["epic_n"] = {}, [], [], 0
+    """Liittää kirjojen (Epicbet, Unibet) pelaajalinjat simulaatioon: sim['epic'][pelaaja] = [{book, line, over, under, opts, best}],
+    sim['epic_top'] = arvolinjat EV-järjestyksessä, sim['epic_missing'] = nimet joita ei löytynyt kokoonpanosta,
+    sim['books'] = linjoja antaneet kirjat. (Nimi 'epic' on jäänne ajalta jolloin lähteenä oli vain Epicbet.)"""
+    sim["epic"], sim["epic_top"], sim["epic_missing"], sim["epic_n"], sim["books"] = {}, [], [], 0, []
     sim["epic_tournament"] = tournament
     if not lines:
         return
@@ -126,13 +127,17 @@ def attach_lines(sim, lines, tournament=None):
         opts = _line_options(sim, nm, float(line), over, under, tournament)
         oks = [o for o in opts if o["ok"]]
         best = max(oks, key=lambda o: o["ev"]) if oks else (max(opts, key=lambda o: o["ev"]) if opts else None)
-        sim["epic"].setdefault(nm, []).append(dict(line=float(line), over=over, under=under, opts=opts, best=best))
+        book = ln.get("book") or "epicbet"
+        sim["epic"].setdefault(nm, []).append(dict(book=book, line=float(line), over=over, under=under, opts=opts, best=best))
         sim["epic_n"] += 1
+        if book not in sim["books"]:
+            sim["books"].append(book)
+    sim["books"].sort(key=lambda b: (b != "epicbet", b))
     for nm, rows in sim["epic"].items():
-        rows.sort(key=lambda r: r["line"])
+        rows.sort(key=lambda r: (r["line"], sim["books"].index(r["book"])))
         for r in rows:
             if r["best"] and r["best"]["ok"]:
-                sim["epic_top"].append(dict(player=nm, team=sim["players"][nm]["team"], line=r["line"], **r["best"]))
+                sim["epic_top"].append(dict(player=nm, team=sim["players"][nm]["team"], line=r["line"], book=r["book"], **r["best"]))
     sim["epic_top"].sort(key=lambda r: r["ev"], reverse=True)
     sim["epic_missing"] = sorted(seen_missing)
     for nm, p in sim["players"].items():
@@ -140,11 +145,11 @@ def attach_lines(sim, lines, tournament=None):
         p["ep"] = rows or []
         oks = [r["best"] for r in (rows or []) if r["best"] and r["best"]["ok"]]
         p["ep_best"] = max(oks, key=lambda o: o["ev"]) if oks else None
-        p["ep_best_line"] = None
+        p["ep_best_line"] = p["ep_best_book"] = None
         if p["ep_best"]:
             for r in rows:
                 if r["best"] is p["ep_best"]:
-                    p["ep_best_line"] = r["line"]
+                    p["ep_best_line"], p["ep_best_book"] = r["line"], r["book"]
 
 
 MODEL_WEIGHT = 0.30    # kuinka paljon mallin arvio painaa historiasuodattimen rinnalla (ennakko, ei datasta)

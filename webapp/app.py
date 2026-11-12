@@ -102,7 +102,7 @@ def pretty_day(d):
 # Selaimen välimuistin tyhjennys kun staattiset tiedostot muuttuvat
 templates.env.globals["v"] = int(max(p.stat().st_mtime for p in (BASE / "static").iterdir()))
 
-for fn in (eur, pct, num, line_fmt, odds_fmt, tone, pretty_day):
+for fn in (eur, pct, num, line_fmt, odds_fmt, tone, pretty_day, pinimport.book_label, pinimport.book_short):
     templates.env.filters[fn.__name__] = fn
 templates.env.filters["tojson_attr"] = lambda v: json.dumps(v, separators=(",", ":"), default=float)
 
@@ -189,21 +189,21 @@ def calc(request: Request, team1: str = Form(""), team2: str = Form(""), odds1: 
 @app.get("/kirjanmerkit", response_class=HTMLResponse)
 @app.get("/epicbet", response_class=HTMLResponse)       # vanha osoite toimii edelleen
 def bookmarklets_page(request: Request):
-    """Asennussivu: kirjanmerkit jotka hakevat Pinnaclen karttakertoimet ja Epicbetin pelaajalinjat yhdellä klikkauksella."""
+    """Asennussivu: kirjanmerkit jotka hakevat Pinnaclen karttakertoimet sekä Epicbetin ja Unibetin pelaajalinjat yhdellä klikkauksella."""
     from urllib.parse import quote
     static = Path(__file__).parent / "static"
     bms = [dict(name=name, url="javascript:" + quote((static / fn).read_text(encoding="utf-8"), safe=""))
-           for name, fn in (("Pinnacle CS2", "pinnacle_cs2.min.js"), ("Epicbet CS2", "epicbet_cs2.min.js"))]
+           for name, fn in (("Pinnacle CS2", "pinnacle_cs2.min.js"), ("Epicbet CS2", "epicbet_cs2.min.js"), ("Unibet CS2", "unibet_cs2.min.js"))]
     return render(request, "epicbet.html", bms=bms, **page_ctx("calc"))
 
 
 @app.post("/pinnacle", response_class=HTMLResponse)
-def pinnacle(request: Request, text: str = Form(""), epic_text: str = Form("")):
-    """Lukee molemmat JSON-laatikot (Pinnacle ja Epicbet) yhdeksi ottelulistaksi. Järjestys: Pinnacle ensin, Epicbet perään
-    (samanarvoisista myöhempi voittaa; Pinnacle voittaa Epicbetin kartta- ja totalikertoimissa joka tapauksessa)."""
+def pinnacle(request: Request, text: str = Form(""), epic_text: str = Form(""), unibet_text: str = Form("")):
+    """Lukee kaikki JSON-laatikot (Pinnacle, Epicbet, Unibet) yhdeksi ottelulistaksi. Järjestys: Pinnacle ensin, kirjat perään
+    (samanarvoisista myöhempi voittaa; Pinnacle voittaa kirjat kartta- ja totalikertoimissa joka tapauksessa)."""
     teams = set(db.team_names())
     docs = []
-    for label, raw in (("Pinnacle-laatikon", text), ("Epicbet-laatikon", epic_text)):
+    for label, raw in (("Pinnacle-laatikon", text), ("Epicbet-laatikon", epic_text), ("Unibet-laatikon", unibet_text)):
         try:
             docs += pinimport.parse_documents(raw) if raw.strip() else []
         except json.JSONDecodeError as e:
@@ -238,7 +238,7 @@ def hae_pinnacle(text: str = Form("")):
 
 
 @app.get("/sim/{sid}/player", response_class=HTMLResponse)
-def sim_player(request: Request, sid: str, name: str, line: str = "", dir: str = ""):
+def sim_player(request: Request, sid: str, name: str, line: str = "", dir: str = "", book: str = ""):
     s = sim.get(sid)
     if not s or name not in s["players"]:
         return render(request, "partials/expired.html")
@@ -247,10 +247,12 @@ def sim_player(request: Request, sid: str, name: str, line: str = "", dir: str =
     pick = None
     if rows:
         want = _fl(line, None) if line else None
-        if want is not None:
-            pick = next((r for r in rows if abs(r["line"] - want) < 1e-9), None)
+        if want is not None:     # sama linja voi olla usealla kirjalla: pyydetty kirja ensin
+            same = [r for r in rows if abs(r["line"] - want) < 1e-9]
+            pick = next((r for r in same if r["book"] == book), None) or (same[0] if same else None)
         if pick is None and p.get("ep_best_line") is not None:
-            pick = next((r for r in rows if r["line"] == p["ep_best_line"]), None)
+            same = [r for r in rows if r["line"] == p["ep_best_line"]]
+            pick = next((r for r in same if r["book"] == p.get("ep_best_book")), None) or (same[0] if same else None)
         if pick is None:      # ei arvoa: lähin tasakertoimiseen linja
             pick = min(rows, key=lambda r: abs((r["over"] or 2) - (r["under"] or 2)))
     d_line, d_dir, d_odds, d_opp = p["line"], "UNDER" if p["p_under"] >= p["p_over"] else "OVER", 1.85, 0
@@ -271,7 +273,8 @@ def sim_player(request: Request, sid: str, name: str, line: str = "", dir: str =
                   default_date=(mdate if from_match else today),
                   match_when=(pinimport.fi_time(ms) if from_match else None),
                   default_dir=d_dir, default_line=d_line, default_odds=d_odds, default_opp=d_opp, alts=rows,
-                  alt_sel=(pick["line"] if pick else None), default_tournament=s.get("epic_tournament"))
+                  alt_sel=(pick["line"] if pick else None), alt_book=(pick["book"] if pick else None),
+                  default_tournament=s.get("epic_tournament"))
 
 
 @app.get("/sim/{sid}/eval", response_class=HTMLResponse)

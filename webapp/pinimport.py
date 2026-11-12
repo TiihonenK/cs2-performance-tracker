@@ -1,8 +1,9 @@
-"""JSON-tuonti Laske-sivulle: Pinnaclen ottelu-JSON ja Epicbetin pelaajalinjat samassa laatikossa.
+"""JSON-tuonti Laske-sivulle: Pinnaclen ottelu-JSON sekä Epicbetin ja Unibetin pelaajalinjat.
 
-- Laatikkoon voi liittää yhden tai useamman JSON-dokumentin peräkkäin (esim. Pinnacle + Epicbet).
+- Kukin lähde liitetään omaan laatikkoonsa, mutta laatikoihin voi liittää myös useita JSON-dokumentteja peräkkäin.
 - Joukkueiden nimet muunnetaan kannan nimiksi ("Team Spirit" -> "Spirit", "FURIA Esports" -> "FURIA").
-- Saman ottelun tiedot yhdistetään: karttakertoimet Pinnaclelta (jos on), pelaajalinjat Epicbetiltä.
+- Saman ottelun tiedot yhdistetään: karttakertoimet Pinnaclelta (jos on), pelaajalinjat Epicbetiltä ja Unibetilta.
+  Jokainen pelaajalinja muistaa kirjan (book), jolta se on, jotta samat linjat eri kirjoilta näkyvät rinnakkain.
 """
 import json
 import re
@@ -10,6 +11,17 @@ from datetime import datetime, timedelta, timezone
 from difflib import get_close_matches
 
 _DROP = {"team", "esports", "gaming", "cs", "club"}
+
+BOOK_LABELS = {"epicbet": "Epicbet", "unibet": "Unibet"}
+BOOK_SHORT = {"epicbet": "Epic", "unibet": "Uni"}
+
+
+def book_label(b):
+    return BOOK_LABELS.get(b) or (str(b).capitalize() if b else "Kirja")
+
+
+def book_short(b):
+    return BOOK_SHORT.get(b) or book_label(b)
 
 
 def norm(name):
@@ -120,12 +132,13 @@ def merge_matches(docs, teams):
             src = str(m.get("source") or "pinnacle").lower()
             it = by.get(key)
             if it is None:
-                it = dict(t1=t1, t2=t2, key=f"{t1} vs {t2}", maps={}, map_rank={}, players=[], tournament=None,
+                it = dict(t1=t1, t2=t2, key=f"{t1} vs {t2}", maps={}, map_rank={}, players=[], _seen={}, tournament=None,
                           start=None, raw=(raw1, raw2), missing=[x for x in (t1, t2) if x not in teams])
                 by[key] = it
                 order.append(key)
             swapped = (t1.lower() == it["t2"].lower() and t2.lower() == it["t1"].lower())
-            rank = 0 if src == "epicbet" else 1      # Pinnacle (ja muut) voittaa Epicbetin
+            rank = 0 if src in BOOK_LABELS else 1    # Pinnacle (ja muut) voittaa kirjat (Epicbet, Unibet)
+            book = src if src in BOOK_LABELS else "epicbet"   # tuntematon lähde: pelaajalinjat kuten ennen = Epicbet
             for mp in m.get("maps", []) or []:
                 no = _map_no(mp.get("map"))
                 if not no:
@@ -148,20 +161,28 @@ def merge_matches(docs, teams):
                 no = _map_no(p.get("map"))
                 if ln is None or not name or not no:
                     continue
-                it["players"].append(dict(player=str(name), team=resolve_team(p.get("team"), teams) or p.get("team"),
-                                          map=int(no), line=ln, over=_num(p.get("over")), under=_num(p.get("under"))))
+                row = dict(player=str(name), team=resolve_team(p.get("team"), teams) or p.get("team"),
+                           map=int(no), line=ln, over=_num(p.get("over")), under=_num(p.get("under")), book=book)
+                dup = (book, row["player"].lower(), row["map"], ln)       # sama JSON liitetty kahdesti -> uusin voittaa
+                if dup in it["_seen"]:
+                    it["players"][it["_seen"][dup]] = row
+                else:
+                    it["_seen"][dup] = len(it["players"])
+                    it["players"].append(row)
             it["tournament"] = it["tournament"] or m.get("tournament")
             it["start"] = it["start"] or m.get("start")
     out = []
     for k in order:
         it = by[k]
         rk = it.pop("map_rank")
+        it.pop("_seen", None)
         it["maps"] = {no: v for no, v in it["maps"].items() if v["odds1"] or v["total"] is not None}
         rk = {no: r for no, r in rk.items() if no in it["maps"]}
         it["map_list"] = ", ".join(sorted(it["maps"]))
         it["has_total"] = any(v.get("total") for v in it["maps"].values())
         it["n_players"] = len({p["player"].lower() for p in it["players"]})
         it["n_lines"] = len(it["players"])
+        it["books"] = [b for b in BOOK_LABELS if any(p["book"] == b for p in it["players"])]
         it["pl_maps"] = ", ".join(sorted({str(p["map"]) for p in it["players"]}))
         it["start_fi"] = fi_time(it["start"]) if it["start"] else None
         # maps_epic: kaikki karttatiedot Epicbetiltä; tot_epic: Pinnaclen voittajakertoimet + Epicbetin kierrostotal

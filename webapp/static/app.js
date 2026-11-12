@@ -420,10 +420,11 @@
     window.addEventListener('pageshow', function (e) { if (e.persisted) calcRestore(); });
   })();
 
-  /* ---------- Pinnaclen ja Epicbetin JSON: kummankin viimeisin tallentuu laitteelle ---------- */
+  /* ---------- Pinnaclen, Epicbetin ja Unibetin JSON: kunkin viimeisin tallentuu laitteelle ---------- */
   var BOXES = [
     { id: 'pin',  ta: '#pin-text',  meta: '#pin-meta',  clr: '#pin-clear',  key: 'pin_json',  ts: 'pin_json_ts',  name: 'Pinnacle', lines: false },
-    { id: 'epic', ta: '#epic-text', meta: '#epic-meta', clr: '#epic-clear', key: 'epic_json', ts: 'epic_json_ts', name: 'Epicbet',  lines: true }
+    { id: 'epic', ta: '#epic-text', meta: '#epic-meta', clr: '#epic-clear', key: 'epic_json', ts: 'epic_json_ts', name: 'Epicbet',  lines: true },
+    { id: 'unibet', ta: '#unibet-text', meta: '#unibet-meta', clr: '#unibet-clear', key: 'unibet_json', ts: 'unibet_json_ts', name: 'Unibet', lines: true }
   ];
   var pinRestoring = false;
 
@@ -518,12 +519,13 @@
     pinStatus();
   });
   document.addEventListener('click', function (e) {
-    var btn = e.target.closest('#pin-clear, #epic-clear'); if (!btn) return;
-    var b = BOXES.filter(function (x) { return x.clr === '#' + btn.id; })[0], o = BOXES.filter(function (x) { return x !== b; })[0];
-    var ta = $(b.ta), ota = $(o.ta), l = $('#pin-list');
+    var btn = e.target.closest('#pin-clear, #epic-clear, #unibet-clear'); if (!btn) return;
+    var b = BOXES.filter(function (x) { return x.clr === '#' + btn.id; })[0];
+    var ta = $(b.ta), l = $('#pin-list');
+    var rest = BOXES.some(function (x) { var t = x !== b && $(x.ta); return !!(t && t.value.trim()); });
     if (ta) ta.value = '';
     try { localStorage.removeItem(b.key); localStorage.removeItem(b.ts); } catch (err) { /* ei tallennusta */ }
-    if (ota && ota.value.trim()) pinRead();          // toinen laatikko jää voimaan -> lista luetaan uudelleen
+    if (rest) pinRead();                             // jokin toinen laatikko jää voimaan -> lista luetaan uudelleen
     else { if (l) l.innerHTML = ''; pinSel = null; pinWanted = ''; pinNote(); calcSave(); }
     pinStatus(); toast({ msg: b.name + '-JSON tyhjennetty' });
   });
