@@ -33,7 +33,9 @@
           <b>Unibet</b>
           <button class="btn sm ghost" id="unibet-clear" type="button" hidden>Tyhjennä</button>
         </div>
-        <textarea name="unibet_text" id="unibet-text" placeholder='Liitä tähän Unibet CS2 -kirjanmerkin kopioima JSON (pelaajalinjat)'></textarea>
+        <button class="btn primary" id="unibet-fetch" type="button">Hae Unibet-kertoimet</button>
+        <small class="muted" id="unibet-fetch-status" hidden></small>
+        <textarea name="unibet_text" id="unibet-text" placeholder='Unibetin JSON (täyttyy napista, tai liitä Unibet CS2 -kirjanmerkin kopioima JSON)'></textarea>
         <small class="muted" id="unibet-meta" hidden></small>
       </div>
 

@@ -7,7 +7,7 @@
   <ul style="margin:0;padding-left:1.2em;line-height:1.6">
     <li><b>Pinnacle</b>: kaikkien CS2-otteluiden <b>karttojen voittajakertoimet ja kierrostotalit</b> (ottelun kertoimet, kun karttamarkkinat ovat auki). Tämän voi hakea myös suoraan Laske-sivun <b>Hae Pinnacle-kertoimet</b> -napilla, jolloin palvelin hakee ne itse eikä kirjanmerkkiä tarvita. Kirjanmerkki on varakeino (esim. jos palvelimen haku ei onnistu).</li>
     <li><b>Epicbet</b>: kaikkien pelaajien <b>tappolinjat ja kertoimet</b> sekä Epicbetin omat karttakertoimet. Epicbet avaa pelaajamarkkinat vasta noin 12 tuntia ennen ottelun alkua.</li>
-    <li><b>Unibet</b>: kaikkien pelaajien <b>tappolinjat ja kertoimet</b> kartoittain (Unibetin Kambi-rajapinnasta). Sisältää vain pelaajalinjat, ei karttakertoimia. Aja fi.unibet.com-sivulla (mielellään Esports → Counter-Strike -listalla). Ikkunan <i>Kopioi diagnostiikka</i> -nappi auttaa, jos jokin ei toimi.</li>
+    <li><b>Unibet</b>: kaikkien pelaajien <b>tappolinjat ja kertoimet</b> kartoittain (Unibetin Kambi-rajapinnasta). Sisältää vain pelaajalinjat, ei karttakertoimia. <b>Helpoin tapa: Laske-sivun <i>Hae Unibet-kertoimet</i> -nappi</b> hakee ne suoraan palvelimelta (sama kuin Pinnaclella). Jos Unibet estää palvelimen haun, aja kirjanmerkki fi.unibet.com-sivulla (mielellään Esports → Counter-Strike -listalla). Kirjanmerkin ikkunan <i>Kopioi diagnostiikka</i> -nappi auttaa, jos jokin ei toimi.</li>
   </ul>
   <p class="muted" style="margin:0">Kun useampi on liitetty, Pinnaclen karttakertoimet ja kierrostotal ovat ensisijaisia, ja Epicbet täydentää puuttuvan (esim. kierrostotalin). Pelaajalinjat tulevat Epicbetiltä ja Unibetilta rinnakkain: samalla pelaajalla näkyvät molempien kirjojen linjat ja kertoimet, ja valitset linjan siltä kirjalta jolle veto lyödään.</p>
 </section>
@@ -48,7 +48,7 @@
   <h2 style="margin:0;font-size:1rem">2. Käyttö</h2>
   <ol style="margin:0;padding-left:1.2em;line-height:1.6">
     <li>Avaa pinnacle.com (Esports → CS2) ja paina <i>Pinnacle CS2</i> -kirjanmerkkiä. Ikkuna listaa ottelut ja kopioi JSONin.</li>
-    <li>Liitä se Laske-sivun Pinnacle-laatikkoon (tai paina siellä <b>Hae Pinnacle-kertoimet</b>). Kun pelaajamarkkinat ovat auki (≤ 12 h ennen alkua), avaa epicbet.com (Esports → Counter-Strike 2), paina <i>Epicbet CS2</i> ja liitä sen JSON Epicbet-laatikkoon. Sama Unibetilla: avaa fi.unibet.com, paina <i>Unibet CS2</i> ja liitä JSON Unibet-laatikkoon.</li>
+    <li>Liitä se Laske-sivun Pinnacle-laatikkoon (tai paina siellä <b>Hae Pinnacle-kertoimet</b>). Kun pelaajamarkkinat ovat auki (≤ 12 h ennen alkua), avaa epicbet.com (Esports → Counter-Strike 2), paina <i>Epicbet CS2</i> ja liitä sen JSON Epicbet-laatikkoon. Unibetilla riittää Unibet-laatikon <b>Hae Unibet-kertoimet</b> -nappi; vaihtoehtoisesti avaa fi.unibet.com, paina <i>Unibet CS2</i> ja liitä JSON Unibet-laatikkoon.</li>
     <li>Paina <b>Lue JSON</b>, valitse ottelu ja kartta ja paina <b>Laske arviot</b>. Näet pelaajien linjat kirjoittain ja <b>Arvolinjat</b>-listan.</li>
   </ol>
   <p class="muted" style="margin:0">Bo1-ottelut (esim. Majorin avauskierrokset) tulevat Kartta 1:ksi, kun Pinnacle antaa niille ottelutason kierrostotalin tai merkitsee ne Bo1:ksi. Ottelut, joilla on vain voittajakertoimet ja ei selvästi Bo1 (esim. Bo3 ilman karttamarkkinoita), ohitetaan. Pinnacle ei tarjoa CS2-pelaajamarkkinoita.</p>

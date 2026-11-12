@@ -17,7 +17,7 @@ from fastapi.templating import Jinja2Templates
 
 from players_props import MAP_NAMES
 
-from . import db, pinimport, pinnacle_fetch, sim, stats
+from . import db, pinimport, pinnacle_fetch, sim, stats, unibet_fetch
 
 BASE = Path(__file__).parent
 app = FastAPI(title="CS2 Vetomalli", docs_url=None, redoc_url=None)
@@ -235,6 +235,41 @@ def hae_pinnacle(text: str = Form("")):
         kept = [d for d in old if not (isinstance(d, dict) and d.get("source") == "pinnacle" and d.get("fetched"))]
         res["text"] = "\n".join(json.dumps(d, ensure_ascii=False, separators=(",", ":")) for d in [doc] + kept)
     return res
+
+
+@app.post("/hae/unibet")
+def hae_unibet(text: str = Form("")):
+    """Hakee Unibetin CS2-pelaajalinjat (Kambi-rajapinta) palvelimelta ja palauttaa Unibet-laatikon uuden sisällön:
+    aiemmin haetut Unibet-haut (source unibet + fetched) korvataan, muut dokumentit säilyvät."""
+    try:
+        old = pinimport.parse_documents(text) if text.strip() else []
+    except json.JSONDecodeError as e:
+        return JSONResponse({"ok": False, "error": f"Unibet-laatikon sisältö ei ole kelvollista JSONia ({e}). Tyhjennä laatikko tai korjaa se ensin."}, status_code=400)
+    try:
+        doc = unibet_fetch.get_cs2()
+    except unibet_fetch.FetchError as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=502)
+    except Exception as e:      # odottamaton: näytetään käyttäjälle, ei kaadeta
+        return JSONResponse({"ok": False, "error": f"Unibet-haku epäonnistui odottamattomasti: {type(e).__name__}: {e}"}, status_code=500)
+    n, total = len(doc["matches"]), doc["cs2_matches_total"]
+    lines = sum(len(m["players"]) for m in doc["matches"])
+    d = doc.get("diag") or {}
+    res = {"ok": True, "n": n, "lines": lines, "total": total, "fetched": doc["fetched"],
+           "upcoming": [u["name"] for u in doc["upcoming"][:5] if u.get("name")],
+           "routes": [a["path"] for a in d.get("attempts", []) if a.get("ok") and a.get("events")][:1],
+           "errors": len(d.get("errors", []))}
+    if n:
+        # tallennettavasta tekstistä diagnostiikka pois (raakanäytteet): se haetaan tarvittaessa osoitteesta /hae/unibet/diag
+        slim = {k: v for k, v in doc.items() if k != "diag"}
+        kept = [x for x in old if not (isinstance(x, dict) and x.get("source") == "unibet" and x.get("fetched"))]
+        res["text"] = "\n".join(json.dumps(x, ensure_ascii=False, separators=(",", ":")) for x in [slim] + kept)
+    return res
+
+
+@app.get("/hae/unibet/diag")
+def hae_unibet_diag():
+    """Viimeisimmän Unibet-haun diagnostiikka (reitit, kill-markkinoiden nimet, raakanäyte, virheet) – liitettäväksi vianetsintään."""
+    return JSONResponse(unibet_fetch.last_diag())
 
 
 @app.get("/sim/{sid}/player", response_class=HTMLResponse)

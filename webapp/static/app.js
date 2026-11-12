@@ -529,21 +529,39 @@
     else { if (l) l.innerHTML = ''; pinSel = null; pinWanted = ''; pinNote(); calcSave(); }
     pinStatus(); toast({ msg: b.name + '-JSON tyhjennetty' });
   });
-  /* ---------- Hae Pinnacle-kertoimet palvelimelta ---------- */
+  /* ---------- Hae kertoimet palvelimelta (Pinnacle: karttakertoimet, Unibet: pelaajalinjat) ---------- */
+  var FETCHES = {
+    'pin-fetch': {
+      url: '/hae/pinnacle', ta: '#pin-text', st: '#pin-fetch-status', busy: 'Haetaan Pinnaclen CS2-otteluita…',
+      done: function (j, hm) {
+        if (!j.n) return { warn: true, msg: 'Pinnaclella ei ole nyt CS2-otteluita karttamarkkinoilla' + (j.total ? ' (' + j.total + ' ottelua pelkillä ottelukertoimilla)' : '') + '.' };
+        return { msg: 'Haettu ' + j.n + ' ottelua klo ' + hm + (j.skipped ? ' · ' + j.skipped + ' ohitettu (vain ottelukertoimet: ' + (j.upcoming || []).slice(0, 3).join(', ') + (j.skipped > 3 ? ' …' : '') + ')' : '') + '.' };
+      }
+    },
+    'unibet-fetch': {
+      url: '/hae/unibet', ta: '#unibet-text', st: '#unibet-fetch-status', busy: 'Haetaan Unibetin CS2-otteluita ja pelaajalinjoja (voi kestää 10–20 s)…',
+      done: function (j, hm) {
+        if (!j.n) {
+          if (!j.total) return { warn: true, msg: 'Unibetin CS2-otteluita ei löytynyt rajapinnasta. Rajapintapolku on voinut muuttua – katso /hae/unibet/diag tai käytä kirjanmerkkiä.' };
+          return { warn: true, msg: 'Unibetilla on ' + j.total + ' CS2-ottelua, mutta pelaajien tappomarkkinat eivät ole vielä auki' + ((j.upcoming || []).length ? ' (lähimmät: ' + j.upcoming.slice(0, 3).join(', ') + ')' : '') + '. Ne aukeavat vasta lähempänä ottelun alkua.' };
+        }
+        return { msg: 'Haettu ' + j.n + ' ottelua, ' + j.lines + ' pelaajalinjaa klo ' + hm + (j.errors ? ' · ' + j.errors + ' ottelun haku epäonnistui' : '') + '.', warn: !!j.errors };
+      }
+    }
+  };
   document.addEventListener('click', function (e) {
-    var b = e.target.closest('#pin-fetch'); if (!b || b.disabled) return;
-    var ta = $('#pin-text'), st = $('#pin-fetch-status'), label = b.textContent;
+    var b = e.target.closest('#pin-fetch, #unibet-fetch'); if (!b || b.disabled) return;
+    var cfg = FETCHES[b.id], ta = $(cfg.ta), st = $(cfg.st), label = b.textContent;
     function say(msg, warn) { if (!st) return; st.hidden = false; st.textContent = msg; st.style.color = warn ? 'var(--warn)' : ''; }
-    b.disabled = true; b.textContent = 'Haetaan…'; say('Haetaan Pinnaclen CS2-otteluita…');
+    b.disabled = true; b.textContent = 'Haetaan…'; say(cfg.busy);
     var body = new URLSearchParams(); body.set('text', ta ? ta.value : '');
-    fetch('/hae/pinnacle', { method: 'POST', body: body })
+    fetch(cfg.url, { method: 'POST', body: body })
       .then(function (r) { return r.json().catch(function () { return { ok: false, error: 'Palvelin vastasi virheellisesti (HTTP ' + r.status + ').' }; }); })
       .then(function (j) {
         if (!j.ok) { say(j.error || 'Haku epäonnistui.', true); return; }
-        var d = new Date(j.fetched), hm = ('0' + d.getHours()).slice(-2) + '.' + ('0' + d.getMinutes()).slice(-2);
-        if (!j.n) { say('Pinnaclella ei ole nyt CS2-otteluita karttamarkkinoilla' + (j.total ? ' (' + j.total + ' ottelua pelkillä ottelukertoimilla)' : '') + '.', true); return; }
-        say('Haettu ' + j.n + ' ottelua klo ' + hm + (j.skipped ? ' · ' + j.skipped + ' ohitettu (vain ottelukertoimet: ' + (j.upcoming || []).slice(0, 3).join(', ') + (j.skipped > 3 ? ' …' : '') + ')' : '') + '.');
-        if (ta) { ta.value = j.text; var rb = $('#pin-read'); if (rb && window.htmx) htmx.trigger(rb, 'click'); }
+        var d = new Date(j.fetched), hm = ('0' + d.getHours()).slice(-2) + '.' + ('0' + d.getMinutes()).slice(-2), res = cfg.done(j, hm);
+        say(res.msg, res.warn);
+        if (j.n && ta) { ta.value = j.text; var rb = $('#pin-read'); if (rb && window.htmx) htmx.trigger(rb, 'click'); }
       })
       .catch(function () { say('Yhteys palvelimeen katkesi. Yritä uudelleen.', true); })
       .then(function () { b.disabled = false; b.textContent = label; });
