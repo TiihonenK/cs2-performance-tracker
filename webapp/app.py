@@ -17,7 +17,7 @@ from fastapi.templating import Jinja2Templates
 
 from players_props import MAP_NAMES
 
-from . import db, epicbet_fetch, pinimport, pinnacle_fetch, sim, stats, unibet_fetch
+from . import db, epicbet_fetch, pinimport, pinnacle_fetch, sim, snapshots, stats, unibet_fetch
 
 BASE = Path(__file__).parent
 app = FastAPI(title="CS2 Vetomalli", docs_url=None, redoc_url=None)
@@ -25,6 +25,7 @@ app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
 templates = Jinja2Templates(directory=str(BASE / "templates"))
 
 db.init_db()
+snapshots.init()
 
 
 # ---------------------------------------------------------------------------
@@ -183,6 +184,7 @@ def calc(request: Request, team1: str = Form(""), team2: str = Form(""), odds1: 
                      _fl(total_line), _fl(total_over), _fl(total_under),
                      epic_lines=ep, epic_tournament=epic_tournament or None,
                      match_start=(match_start.strip()[:40] or None))
+    snapshots.save_model(team1, team2, kartta, s.get("players"), match_start.strip()[:40] or None)
     return render(request, "partials/sim_result.html", sid=sid, s=s)
 
 
@@ -208,6 +210,7 @@ def pinnacle(request: Request, text: str = Form(""), epic_text: str = Form(""), 
             docs += pinimport.parse_documents(raw) if raw.strip() else []
         except json.JSONDecodeError as e:
             return render(request, "partials/error.html", problems=[f"{label} JSON ei kelpaa: {e}"])
+    snapshots.save_docs(docs)       # kirjojen linjat talteen (kerran per haku) markkina-analyysiä varten
     items = pinimport.merge_matches(docs, teams)
     if not items:
         return render(request, "partials/error.html",
@@ -517,32 +520,34 @@ def bet_delete(request: Request, bet_id: int):
 # ---------------------------------------------------------------------------
 # Tilastot
 # ---------------------------------------------------------------------------
-def _scoped(range_key, tournament):
+def _scoped(range_key, tournament, date_from="", date_to=""):
     df = stats.load_df()
-    return df, stats.apply_filter(df, range_key, tournament)
+    return df, stats.apply_filter(df, range_key, tournament, date_from, date_to)
 
 
 @app.get("/stats", response_class=HTMLResponse)
-def stats_page(request: Request, range: str = "all", tournament: str = "all", tab: str = "overview"):
+def stats_page(request: Request, range: str = "all", tournament: str = "all", tab: str = "overview", date_from: str = "", date_to: str = ""):
     df = stats.load_df()
     names = sorted(df["tournament"].unique()) if not df.empty else []
     return render(request, "stats.html", ranges=stats.RANGES, range_key=range, tournament=tournament,
-                  tournament_names=names, tab=tab, **page_ctx("stats"))
+                  tournament_names=names, tab=tab, date_from=date_from, date_to=date_to, **page_ctx("stats"))
 
 
 @app.get("/stats/overview", response_class=HTMLResponse)
-def stats_overview(request: Request, range: str = "all", tournament: str = "all"):
-    _, d = _scoped(range, tournament)
+def stats_overview(request: Request, range: str = "all", tournament: str = "all", date_from: str = "", date_to: str = ""):
+    _, d = _scoped(range, tournament, date_from, date_to)
+    custom = bool(stats._day(date_from) or stats._day(date_to))
     if d.empty or not d["settled"].any():
         return render(request, "partials/stats_empty.html")
     return render(request, "partials/stats_overview.html", sm=stats.summary(d), equity=stats.equity(d),
-                  daily=stats.daily(d), tournaments=stats.by_tournament(d), directions=stats.by_direction(d),
+                  daily=stats.daily(d, limit=400 if (custom or range != "all") else 30), span=stats.span_label(date_from, date_to),
+                  tournaments=stats.by_tournament(d), directions=stats.by_direction(d),
                   odds=stats.by_odds(d), rolling=stats.rolling(d), monthly=stats.monthly(d))
 
 
 @app.get("/stats/model", response_class=HTMLResponse)
-def stats_model(request: Request, range: str = "all", tournament: str = "all"):
-    _, d = _scoped(range, tournament)
+def stats_model(request: Request, range: str = "all", tournament: str = "all", date_from: str = "", date_to: str = ""):
+    _, d = _scoped(range, tournament, date_from, date_to)
     cal = sim.get_calibration()
     import bet_calibration as bc
     calsaved = d[d["cal_prob"].notna()] if (not d.empty and "cal_prob" in d.columns) else d
@@ -553,9 +558,14 @@ def stats_model(request: Request, range: str = "all", tournament: str = "all"):
                   cal_text=bc.describe(cal))
 
 
+@app.get("/stats/market", response_class=HTMLResponse)
+def stats_market(request: Request):
+    return render(request, "partials/stats_market.html", ov=snapshots.overview())
+
+
 @app.get("/stats/players", response_class=HTMLResponse)
-def stats_players(request: Request, range: str = "all", tournament: str = "all", player: str = ""):
-    _, d = _scoped(range, tournament)
+def stats_players(request: Request, range: str = "all", tournament: str = "all", player: str = "", date_from: str = "", date_to: str = ""):
+    _, d = _scoped(range, tournament, date_from, date_to)
     plist = stats.players(d) if not d.empty else []
     detail = stats.player_detail(d, player) if (player and not d.empty) else None
     recent = []
@@ -605,18 +615,28 @@ def tournament_create(request: Request, name: str = Form("")):
 
 
 @app.get("/tournaments/{tid}", response_class=HTMLResponse)
-def tournament_detail(request: Request, tid: int):
+def tournament_detail(request: Request, tid: int, day: str = "", date_from: str = "", date_to: str = ""):
+    """Turnauksen sheet. day = yksi pelipäivä; date_from/date_to = oma aikaväli; muuten koko turnaus. Päivänapit näkyvät aina."""
     ts = {t["id"]: t for t in db.list_tournaments()}
     t = ts.get(tid)
     if not t:
         return render(request, "partials/expired.html")
     df = stats.load_df()
-    sub = df[df["tournament"] == t["name"]] if not df.empty else df
+    full = df[df["tournament"] == t["name"]] if not df.empty else df
+    all_days = sorted(full["day"].dropna().unique(), reverse=True) if not full.empty else []
+    if day and stats._day(day):
+        date_from = date_to = day
+    sub = stats.apply_filter(full, "all", "all", date_from, date_to) if not full.empty else full
+    sel_day = date_from if (date_from and date_from == date_to) else ""
     groups = stats.day_groups(sub) if not sub.empty else []
     for g in groups:
         g["bets"] = [{k: (None if (isinstance(v, float) and v != v) else v) for k, v in b.items()} for b in g["bets"]]
+    dly = stats.daily(sub, limit=400) if not sub.empty else None
     return render(request, "partials/tournament_sheet.html", t=t, sm=stats.summary(sub),
-                  equity=(stats.equity(sub) if (not sub.empty and sub["settled"].any()) else None), groups=groups)
+                  equity=(stats.equity(sub, by_bet=bool(sel_day)) if (not sub.empty and sub["settled"].any()) else None), groups=groups,
+                  days=all_days, sel_day=sel_day, date_from=date_from, date_to=date_to, span=stats.span_label(date_from, date_to),
+                  daily=dly if (dly and len(dly["days"]) > 1) else None, total_n=int(len(full)),
+                  dmin=(all_days[-1] if all_days else ""), dmax=(all_days[0] if all_days else ""))
 
 
 @app.post("/tournaments/{tid}/status", response_class=HTMLResponse)

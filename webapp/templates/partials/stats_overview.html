@@ -1,5 +1,5 @@
 <section class="tile hero">
-  <div class="lab">Tulos{{ '' }}</div>
+  <div class="lab">Tulos{% if span %} · {{ span }}{% endif %}</div>
   <div class="val num {{ sm.profit | tone }}">{{ sm.profit | eur }}</div>
   <div class="hint">ROI <b class="{{ sm.roi | tone }}">{{ sm.roi | pct(1, true) }}</b> · panostettu {{ sm.staked | eur(false, 0) }} · {{ sm.settled }} ratkaistua</div>
 </section>
@@ -23,7 +23,7 @@
 
 {% if daily %}
 <section class="card">
-  <div class="card-h"><h3>Päivän tulos</h3><span class="sub">viimeiset {{ daily.days | length }} pelipäivää</span></div>
+  <div class="card-h"><h3>Päivän tulos</h3><span class="sub">{{ daily.days | length }} pelipäivää</span></div>
   <div class="chartbox"><canvas data-chart="daily" data-payload='{{ daily | tojson_attr }}' role="img" aria-label="Päiväkohtainen tulos euroina"></canvas></div>
   <details class="tablefold"><summary>Näytä taulukkona</summary>
     <div class="tscroll"><table class="t"><thead><tr><th>Päivä</th><th>Vetoja</th><th>ROI</th><th>Tulos</th></tr></thead><tbody>

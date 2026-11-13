@@ -64,19 +64,45 @@ def bet_profit(row):
 RANGES = [("all", "Kaikki"), ("7", "7 pv"), ("30", "30 pv"), ("90", "90 pv")]
 
 
-def apply_filter(df, range_key="all", tournament="all"):
+def _day(v):
+    try:
+        return datetime.strptime(str(v)[:10], "%Y-%m-%d")
+    except ValueError:
+        return None
+
+
+def apply_filter(df, range_key="all", tournament="all", date_from="", date_to=""):
+    """Turnaus + aikaväli. Oma päivämääräväli (date_from/date_to, YYYY-MM-DD, molemmat mukana) ohittaa 7/30/90 pv -valinnan."""
     if df.empty:
         return df
     out = df
     if tournament and tournament != "all":
         out = out[out["tournament"] == tournament]
-    if range_key and range_key != "all":
+    d1, d2 = _day(date_from), _day(date_to)
+    if d1 or d2:
+        if d1 and d2 and d2 < d1:
+            d1, d2 = d2, d1
+        if d1:
+            out = out[out["dt"] >= d1]
+        if d2:
+            out = out[out["dt"] < d2 + timedelta(days=1)]
+    elif range_key and range_key != "all":
         try:
             cutoff = datetime.now() - timedelta(days=int(range_key))
             out = out[out["dt"] >= cutoff]
         except ValueError:
             pass
     return out
+
+
+def span_label(date_from="", date_to=""):
+    d1, d2 = _day(date_from), _day(date_to)
+    if not (d1 or d2):
+        return ""
+    f = lambda d: f"{d.day}.{d.month}.{d.year}"
+    if d1 and d2 and d1 == d2:
+        return f(d1)
+    return f"{f(d1) if d1 else '…'} – {f(d2) if d2 else '…'}"
 
 
 def summary(df):
@@ -102,11 +128,15 @@ def _chrono(df):
     return df.sort_values(["dt", "id"], kind="stable")
 
 
-def equity(df):
+def equity(df, by_bet=False):
+    """Kassakäyrä. by_bet=True: x-akselina vedon järjestysnumero (yhden päivän käyrälle, jossa kaikki päivämäärät ovat samat)."""
     s = _chrono(df[df["settled"]])
     if s.empty:
         return None
     cum = s["profit"].cumsum()
+    if by_bet:
+        return dict(labels=[str(i + 1) for i in range(len(s))], dates=[d if isinstance(d, str) else "" for d in s["day"]],
+                    values=[round(float(v), 2) for v in cum], end=round(float(cum.iloc[-1]), 2))
     return dict(labels=[d[5:10] if isinstance(d, str) else "" for d in s["day"]],
                 dates=[d if isinstance(d, str) else "" for d in s["day"]],
                 values=[round(float(v), 2) for v in cum],

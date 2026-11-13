@@ -3,6 +3,19 @@
   <button class="xbtn" type="button" data-close aria-label="Sulje"><svg class="icon"><use href="#i-x"/></svg></button>
 </div>
 <div class="stack">
+  {% if days %}
+  <div class="dayfilter">
+    <div class="chips" role="group" aria-label="Pelipäivä">
+      <button type="button" class="chipbtn {{ 'on' if not (date_from or date_to) }}" hx-get="/tournaments/{{ t.id }}" hx-target="#sheet-body" hx-swap="innerHTML">Kaikki</button>
+      {% for d in days %}<button type="button" class="chipbtn {{ 'on' if sel_day == d }}" hx-get="/tournaments/{{ t.id }}?day={{ d }}" hx-target="#sheet-body" hx-swap="innerHTML">{{ d | pretty_day }}</button>{% endfor %}
+    </div>
+    <form class="datespan" hx-get="/tournaments/{{ t.id }}" hx-target="#sheet-body" hx-swap="innerHTML" hx-trigger="change">
+      <label class="dfield"><span>Alkaen</span><input type="date" name="date_from" value="{{ date_from }}" min="{{ dmin }}" max="{{ dmax }}"></label>
+      <label class="dfield"><span>Asti</span><input type="date" name="date_to" value="{{ date_to }}" min="{{ dmin }}" max="{{ dmax }}"></label>
+    </form>
+    {% if span %}<div class="muted" style="font-size:.82rem">Näytetään {{ span }} · {{ sm.n }} / {{ total_n }} vetoa</div>{% endif %}
+  </div>
+  {% endif %}
   <div class="grid3">
     <div class="tile"><div class="lab">Tulos</div><div class="val num {{ sm.profit | tone }}">{{ sm.profit | eur(true, 0) }}</div></div>
     <div class="tile"><div class="lab">ROI</div><div class="val num {{ sm.roi | tone }}">{{ sm.roi | pct(1, true) }}</div></div>
@@ -11,11 +24,22 @@
   {% if equity and equity['values'] | length > 1 %}
   <div class="chartbox"><canvas data-chart="equity" data-payload='{{ equity | tojson_attr }}' role="img" aria-label="Turnauksen kumulatiivinen tulos"></canvas></div>
   {% endif %}
+  {% if daily %}
+  <h3>Päivän tulos</h3>
+  <div class="chartbox"><canvas data-chart="daily" data-payload='{{ daily | tojson_attr }}' role="img" aria-label="Päiväkohtainen tulos euroina"></canvas></div>
+  {% endif %}
+  {% if sel_day and not equity %}<p class="muted" style="margin:0">Ei ratkaistuja vetoja tälle päivälle.</p>{% endif %}
   {% if groups %}
-  <h3>Päivä kerrallaan</h3>
+  <h3>{{ 'Vedot' if sel_day else 'Päivä kerrallaan' }}</h3>
   {% for g in groups %}
   <div class="dbar" style="grid-template-columns:1fr auto;align-items:baseline"><span class="nm" style="font-weight:600">{{ g.day | pretty_day }} <small class="muted">{{ g.bets | length }} vetoa</small></span>
     <span class="num {{ g.profit | tone }}">{{ g.profit | eur }}{% if g.settled %} · {{ g.roi | pct(1, true) }}{% endif %}</span></div>
+  {% endfor %}
+  {% endif %}
+  {% if sel_day and groups %}
+  {% for b in groups[0].bets %}
+  <div class="dbar" style="grid-template-columns:1fr auto;align-items:baseline"><span class="nm">{{ b.description }} <small class="muted">@ {{ b.odds }} · {{ b.status }}</small></span>
+    <span class="num {{ b.profit | tone }}">{{ b.profit | eur }}</span></div>
   {% endfor %}
   {% endif %}
   <hr style="border:0;border-top:1px solid var(--line);width:100%">

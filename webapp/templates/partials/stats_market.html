@@ -1,0 +1,22 @@
+<section class="card">
+  <div class="card-h"><h3>Tallennetut kertoimet</h3><span class="sub">Epicbet + Unibet</span></div>
+  {% if ov.counts %}
+  <div class="tscroll"><table class="t"><thead><tr><th>Kirja</th><th>Linjoja</th><th>Hakuja</th><th>Viimeisin</th></tr></thead><tbody>
+  {% for c in ov.counts %}<tr><td>{{ c.book | book_label }}</td><td>{{ c.n }}</td><td>{{ c.fetches }}</td><td>{{ c.last[:16] | replace('T', ' ') }}</td></tr>{% endfor %}
+  </tbody></table></div>
+  <p class="muted" style="margin:8px 0 0;font-size:.82rem">Jokainen Lue JSON -kerta tallentaa kirjojen pelaajalinjat (kerran per haku). Niistä lasketaan markkinan oma arvio pelaajan tapoista: kate pois, sitten normaalijakauma sovitetaan linjatikkaisiin.</p>
+  {% else %}<div class="empty">Ei vielä tallennettuja linjoja. Hae Epicbet- tai Unibet-kertoimet Laske-sivulla ja paina Lue JSON.</div>{% endif %}
+</section>
+<section class="card">
+  <div class="card-h"><h3>Malli vs. markkina</h3><span class="sub">{{ ov.n_compared }} / {{ ov.n_est }} pelaajaa vertailtavissa</span></div>
+  {% if ov.rows %}
+  <div class="grid2">
+    <div class="tile"><div class="lab">Keskimääräinen ero</div><div class="val num">{{ '%+.2f' | format(ov.mean_diff) }}</div><div class="hint">malli − markkina (tappoa)</div></div>
+    <div class="tile"><div class="lab">Itseisarvo</div><div class="val num">{{ '%.2f' | format(ov.mean_abs) }}</div><div class="hint">keskim. poikkeama</div></div>
+  </div>
+  <div class="tscroll"><table class="t"><thead><tr><th>Pelaaja</th><th>K</th><th>Malli</th><th>Markkina</th><th>Ero</th></tr></thead><tbody>
+  {% for r in ov.rows %}<tr><td>{{ r.player }} <small class="muted">{{ r.book | book_short }}</small></td><td>{{ r.map }}</td><td>{{ '%.1f' | format(r.model) }}</td><td>{{ '%.1f' | format(r.market) }}</td><td class="{{ r.diff | tone }}">{{ '%+.1f' | format(r.diff) }}</td></tr>{% endfor %}
+  </tbody></table></div>
+  <p class="muted" style="margin:8px 0 0;font-size:.82rem">Vertailu syntyy kun sama ottelu ja kartta on laskettu Laske-sivulla (malli tallentuu) ja kirjan linjat on luettu. Suurimmat erot ensin. Toteutuneet tapot lisätään vertailuun myöhemmin.</p>
+  {% else %}<div class="empty">Ei vielä vertailua: laske ottelun kartta Laske-sivulla sen jälkeen kun Epicbet-/Unibet-JSON on luettu.</div>{% endif %}
+</section>

@@ -288,3 +288,12 @@ details.tablefold > summary::-webkit-details-marker { display: none; }
 .altchip.ok { border-color: color-mix(in srgb, var(--pos) 55%, transparent); }
 .altchip.ok small { color: var(--pos); }
 .altchip.on { border-color: var(--accent); background: var(--accent-wash); }
+
+/* Aikavälin valinta (Tilastot + turnaussheet) */
+.datespan { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; }
+.datespan .dfield { display: flex; flex-direction: column; gap: 2px; flex: 1 1 130px; min-width: 0; font-size: .78rem; color: var(--muted); }
+.datespan .dfield input { width: 100%; min-height: 40px; }
+.dayfilter { display: flex; flex-direction: column; gap: 8px; }
+.chips { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; -webkit-overflow-scrolling: touch; }
+.chipbtn { flex: none; min-height: 36px; padding: 0 12px; border-radius: 18px; border: 1px solid var(--line); background: var(--surface-2); cursor: pointer; font-size: .85rem; white-space: nowrap; }
+.chipbtn.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }

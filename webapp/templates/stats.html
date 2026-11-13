@@ -3,7 +3,12 @@
 <div class="page-h"><h1>Tilastot</h1></div>
 <form id="sf" class="filters" onsubmit="return false">
   <div class="seg" role="radiogroup" aria-label="Aikaväli">
-    {% for key, lab in ranges %}<input type="radio" name="range" id="r-{{ key }}" value="{{ key }}" {{ 'checked' if key == range_key }}><label for="r-{{ key }}">{{ lab }}</label>{% endfor %}
+    {% for key, lab in ranges %}<input type="radio" name="range" id="r-{{ key }}" value="{{ key }}" {{ 'checked' if (key == range_key and not (date_from or date_to)) }}><label for="r-{{ key }}">{{ lab }}</label>{% endfor %}
+  </div>
+  <div class="datespan" id="datespan">
+    <label class="dfield"><span>Alkaen</span><input type="date" name="date_from" id="d-from" value="{{ date_from }}" aria-label="Alkupäivä"></label>
+    <label class="dfield"><span>Asti</span><input type="date" name="date_to" id="d-to" value="{{ date_to }}" aria-label="Loppupäivä"></label>
+    <button type="button" class="btn sm ghost" id="d-clear" {{ 'hidden' if not (date_from or date_to) }}>Tyhjennä</button>
   </div>
   <select name="tournament" aria-label="Turnaus">
     <option value="all">Kaikki turnaukset</option>
@@ -13,6 +18,7 @@
     <button type="button" class="{{ 'on' if tab == 'overview' }}" data-tab="overview">Yleiskuva</button>
     <button type="button" class="{{ 'on' if tab == 'model' }}" data-tab="model">Malli</button>
     <button type="button" class="{{ 'on' if tab == 'players' }}" data-tab="players">Pelaajat</button>
+    <button type="button" class="{{ 'on' if tab == 'market' }}" data-tab="market">Markkina</button>
   </div>
 </form>
 <div id="stats-content" class="stack" hx-get="/stats/{{ tab }}" hx-include="#sf" hx-trigger="load, change from:#sf, refresh" hx-swap="innerHTML"></div>

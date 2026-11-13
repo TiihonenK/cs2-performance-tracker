@@ -106,6 +106,22 @@
       htmx.process(c); htmx.trigger(c, 'refresh');
     }
   });
+  /* Tilastot: oma aikaväli (kalenteri) ohittaa 7/30/90 pv -napit; nappi tyhjentää päivät. Capture-vaihe: kentät päivitetään ennen kuin lomake luetaan. */
+  var sfForm = $('#sf');
+  if (sfForm) {
+    sfForm.addEventListener('change', function (e) {
+      var t = e.target, f = $('#d-from'), to = $('#d-to'), clr = $('#d-clear');
+      if (t && t.name === 'range') { if (f) f.value = ''; if (to) to.value = ''; }
+      else if (t && (t.id === 'd-from' || t.id === 'd-to')) { $$('input[name=range]', sfForm).forEach(function (r) { r.checked = false; }); }
+      if (clr) clr.hidden = !((f && f.value) || (to && to.value));
+    }, true);
+    var dclr = $('#d-clear');
+    if (dclr) dclr.addEventListener('click', function () {
+      $('#d-from').value = ''; $('#d-to').value = ''; dclr.hidden = true;
+      var all = $('#r-all'); if (all) all.checked = true;
+      var c = $('#stats-content'); if (c && window.htmx) htmx.trigger(c, 'refresh');
+    });
+  }
   /* Pelaajasheetin Epicbet-linjat: linja + kertoimet kerralla, suunta vaihtaa kertoimet */
   var altSel = null;
   function setField(id, v) { var el = document.getElementById(id); if (el) el.value = v; }

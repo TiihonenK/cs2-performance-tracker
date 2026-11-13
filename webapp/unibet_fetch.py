@@ -135,7 +135,7 @@ def _is_cs(e):
 def _upcoming_cs(lst):
     seen, out = set(), []
     for e in lst:
-        if not e or not e.get("id") or e["id"] in seen or not _is_cs(e) or (e.get("state") and e["state"] != "NOT_STARTED"):
+        if not e or not e.get("id") or e["id"] in seen or not _is_cs(e) or (e.get("state") and e["state"] not in ("NOT_STARTED", "STARTED")):
             continue
         seen.add(e["id"])
         out.append(e)
@@ -236,6 +236,15 @@ def _discover(diag):
         except _Err as e:
             diag["attempts"].append({"how": c["how"], "path": c["rel"], "ok": False, "err": e.msg})
             diag["_errs"].append(e)
+    # käynnissä olevat ottelut voivat puuttua ennakkolistasta: Kambin live-lista täydentää (virheet ohitetaan)
+    try:
+        lv = [e for e in _upcoming_cs(_events_of(_get_rel("event/live/open.json"))) if e.get("state") == "STARTED"]
+        diag["attempts"].append({"how": "live", "path": "event/live/open.json", "ok": True, "events": len(lv)})
+        have = {e["id"] for e in events}
+        events += [e for e in lv if e["id"] not in have]
+        n_ok += 1 if lv else 0
+    except _Err as e:
+        diag["attempts"].append({"how": "live", "path": "event/live/open.json", "ok": False, "err": e.msg})
     return events, n_ok
 
 
@@ -255,7 +264,9 @@ def fetch_cs2():
             raise _fe(pick)
     events.sort(key=lambda e: str(e.get("start") or ""))
     with_count = any(_num(e.get("nonLiveBoCount")) for e in events)
-    todo = [e for e in events if (e.get("nonLiveBoCount") or 0) >= MIN_BO][:MAX_EVENTS] if with_count else events[:NO_COUNT_EVENTS]
+    live = [e for e in events if e.get("state") == "STARTED"]       # käynnissä olevat: haetaan aina (live-markkinoiden määrä ei näy nonLiveBoCountissa)
+    pre = [e for e in events if e.get("state") != "STARTED"]
+    todo = live + ([e for e in pre if (e.get("nonLiveBoCount") or 0) >= MIN_BO][:MAX_EVENTS] if with_count else pre[:NO_COUNT_EVENTS])
 
     def load(ev):
         try:
@@ -283,7 +294,8 @@ def fetch_cs2():
         if players:
             players.sort(key=lambda p: (p["map"], p["player"].casefold(), p["line"]))
             matches.append({"team1": nm[0], "team2": nm[1], "tournament": e2.get("group") or ev.get("group"), "start": e2.get("start") or ev.get("start"),
-                            "source": "unibet", "maps": [], "players": players})
+                            "source": "unibet", "maps": [], "players": players,
+                            **({"live": True} if (e2.get("state") or ev.get("state")) == "STARTED" else {})})
     if todo and not n_det_ok:
         errs = [x for x in diag["_errs"] if x.kind != "http" or x.code != 404] or diag["_errs"]
         pick = next((e for e in errs if e.kind == "blocked"), None) or errs[-1]
